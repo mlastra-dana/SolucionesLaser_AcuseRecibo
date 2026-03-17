@@ -1,0 +1,22 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  @apply bg-brand-background text-brand-ink antialiased;
+}
+
+* {
+  @apply border-brand-border;
+}
+
+:focus-visible {
+  outline: 2px solid #DD5736;
+  outline-offset: 2px;
+}
