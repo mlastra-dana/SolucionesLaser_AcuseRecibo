@@ -87,8 +87,9 @@ export const createBaseAckPdf = async (ack: PendingAck): Promise<Uint8Array> => 
     color
   });
 
-  const signatureBlock = { x: 50, y: 280, width: 495, height: 170 };
-  const signatureArea = { x: 68, y: 336, width: 200, height: 74 };
+  const signatureBlock = { x: 50, y: 255, width: 495, height: 195 };
+  const signatureArea = { x: 68, y: 332, width: 220, height: 76 };
+  const metaX = 320;
 
   page.drawRectangle({
     ...signatureBlock,
@@ -101,9 +102,27 @@ export const createBaseAckPdf = async (ack: PendingAck): Promise<Uint8Array> => 
     borderWidth: 1
   });
 
-  page.drawText('Firmante:', { x: 68, y: 318, size: 10, font: bold, color });
-  page.drawText('Codigo de firma:', { x: 68, y: 300, size: 10, font: bold, color });
-  page.drawText('Fecha de firma:', { x: 68, y: 282, size: 10, font: bold, color });
+  page.drawText('Bloque de Firma y Aceptacion', {
+    x: 68,
+    y: 426,
+    size: 10,
+    font: bold,
+    color
+  });
+  page.drawLine({
+    start: { x: 72, y: 326 },
+    end: { x: 284, y: 326 },
+    thickness: 0.8,
+    color: rgb(0.8, 0.82, 0.85)
+  });
+  page.drawText('Firma del receptor', { x: 72, y: 314, size: 9, font, color: rgb(0.42, 0.45, 0.5) });
+
+  page.drawText('Firmante:', { x: metaX, y: 385, size: 10, font: bold, color });
+  page.drawText('______________________________', { x: metaX, y: 372, size: 10, font, color: rgb(0.45, 0.48, 0.52) });
+  page.drawText('Codigo de firma:', { x: metaX, y: 348, size: 10, font: bold, color });
+  page.drawText('______________________________', { x: metaX, y: 335, size: 10, font, color: rgb(0.45, 0.48, 0.52) });
+  page.drawText('Fecha de firma:', { x: metaX, y: 311, size: 10, font: bold, color });
+  page.drawText('______________________________', { x: metaX, y: 298, size: 10, font, color: rgb(0.45, 0.48, 0.52) });
 
   return pdf.save();
 };
@@ -112,35 +131,35 @@ export const signAckPdf = async (params: SignAckPdfRequest): Promise<Uint8Array>
   const pdf = await PDFDocument.load(params.pdfBytes);
   const page = pdf.getPages()[0];
   const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const signatureBytes = toUint8Array(params.signatureDataUrl);
   const signatureImage = await pdf.embedPng(signatureBytes);
   const color = rgb(0.07, 0.09, 0.13);
+  const metaX = 320;
 
   page.drawImage(signatureImage, {
     x: 75,
-    y: 344,
-    width: 186,
-    height: 58
+    y: 338,
+    width: 198,
+    height: 62
   });
 
-  page.drawText(`Firmante: ${params.signerName}`, {
-    x: 68,
-    y: 318,
-    size: 10,
-    font: bold,
-    color
-  });
-  page.drawText(`Codigo de firma: ${params.confirmationCode}`, {
-    x: 68,
-    y: 300,
+  page.drawText(params.signerName, {
+    x: metaX,
+    y: 372,
     size: 10,
     font,
     color
   });
-  page.drawText(`Fecha de firma: ${params.signedAt}`, {
-    x: 68,
-    y: 282,
+  page.drawText(params.confirmationCode, {
+    x: metaX,
+    y: 335,
+    size: 10,
+    font,
+    color
+  });
+  page.drawText(params.signedAt, {
+    x: metaX,
+    y: 298,
     size: 10,
     font,
     color
