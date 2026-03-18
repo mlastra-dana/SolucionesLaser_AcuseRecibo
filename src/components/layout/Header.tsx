@@ -11,12 +11,9 @@ function Header() {
           <span className="text-xs font-medium uppercase tracking-wide text-brand-muted sm:text-sm">Acuse de recibo</span>
         </Link>
 
-        <a
-          href="mailto:soporte@danaconnect.com"
-          className="text-sm font-medium text-brand-muted transition-colors hover:text-brand-ink"
-        >
-          Ayuda
-        </a>
+        <Link to="/" className="text-sm font-medium text-brand-muted transition-colors hover:text-brand-ink">
+          Salir
+        </Link>
       </div>
     </header>
   );

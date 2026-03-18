@@ -31,16 +31,20 @@ function ConfirmationPage() {
               <h2 className="text-sm font-semibold text-brand-ink">Resumen de confirmación</h2>
               <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
+                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Documento</dt>
+                  <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.documentNumber}</dd>
+                </div>
+                <div>
                   <dt className="text-xs uppercase tracking-wide text-brand-muted">Firmante</dt>
                   <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.signerName}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Código de confirmación</dt>
-                  <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.confirmationCode}</dd>
-                </div>
-                <div>
                   <dt className="text-xs uppercase tracking-wide text-brand-muted">Fecha y hora</dt>
                   <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.signedAt}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Código de confirmación</dt>
+                  <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.confirmationCode}</dd>
                 </div>
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-brand-muted">Estado</dt>

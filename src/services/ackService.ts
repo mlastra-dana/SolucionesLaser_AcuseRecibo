@@ -8,6 +8,7 @@ import {
   SubmitSignedAckResponse
 } from '../types/ack';
 import { formatDateTime } from '../utils/format';
+import { signAckPdf } from './pdfSigningService';
 
 let latestConfirmation: AckConfirmationSummary | null = null;
 
@@ -18,11 +19,7 @@ const buildShortCode = () => `ACK-${Math.random().toString(36).slice(2, 8).toUpp
 
 const formatTimestamp = (date: Date) => formatDateTime(date);
 
-const validateSignedPayload = (payload: SignedAckPayload) => {
-  if (!payload.accepted) {
-    throw new Error('El acuse debe estar aceptado para su registro.');
-  }
-
+const validateSignaturePayload = (payload: Pick<SignedAckPayload, 'signerName' | 'signatureDataUrl'>) => {
   if (!payload.signerName || payload.signerName.trim().length < 3) {
     throw new Error('El nombre del firmante no es válido.');
   }
@@ -40,32 +37,46 @@ export const ackService = {
 
   async generateSignedPreview(payload: SignedPreviewPayload): Promise<SignedPreviewResult> {
     await delay(500);
-    validateSignedPayload(payload);
 
     const signedAt = payload.signedAt || formatTimestamp(new Date());
+    const signatureCode = buildShortCode();
+    const signedPdfBytes = await signAckPdf({
+      ackId: payload.ackId,
+      pdfBytes: payload.pdfBytes,
+      signerName: payload.signerName,
+      signatureDataUrl: payload.signatureDataUrl,
+      signedAt,
+      confirmationCode: signatureCode
+    });
 
     return {
+      signedPdfBytes,
       signedAt,
-      signatureCode: buildShortCode(),
+      signatureCode,
       status: 'Documento firmado'
     };
   },
 
   async submitSignedAck(payload: SignedAckPayload): Promise<SubmitSignedAckResponse> {
     await delay(900);
-    validateSignedPayload(payload);
+    validateSignaturePayload(payload);
+
+    if (!payload.accepted) {
+      throw new Error('El acuse debe estar aceptado para su registro.');
+    }
 
     const confirmationCode = buildCode();
     latestConfirmation = {
       ...initialConfirmationMock,
       ackId: payload.ackId,
+      documentNumber: pendingAckMock.documentNumber,
       signerName: payload.signerName.trim(),
       signedAt: payload.signedAt || formatTimestamp(new Date()),
-      confirmationCode,
+      confirmationCode: payload.confirmationCode || confirmationCode,
       status: 'Acuse firmado'
     };
 
-    return { confirmationCode };
+    return { confirmationCode: payload.confirmationCode || confirmationCode };
   },
 
   getLastConfirmation(): AckConfirmationSummary | null {
