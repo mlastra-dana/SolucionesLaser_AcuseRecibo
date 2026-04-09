@@ -130,14 +130,19 @@ function AckProcessPage() {
 
     setIsProcessing(true);
     try {
-      await ackService.submitSignedAck({
+      const result = await ackService.submitSignedAck({
         ackId: pendingAck.ackId,
         signerName: pendingAck.signerName,
         accepted,
         signatureDataUrl,
         signedAt,
-        confirmationCode: signatureCode
+        confirmationCode: signatureCode,
+        signedPdfBytes: pdfBytes ?? basePdfBytes ?? new Uint8Array(),
+        customerEmail: pendingAck.email,
+        customerName: pendingAck.clientName,
+        documentNumber: pendingAck.documentNumber
       });
+      window.open(result.invoiceUrl, '_blank', 'noopener,noreferrer');
       navigate('/confirmacion');
     } catch {
       setSubmitError('No fue posible completar el tramite. Intenta nuevamente en unos segundos.');

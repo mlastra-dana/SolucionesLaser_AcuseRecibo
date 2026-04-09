@@ -12,12 +12,24 @@ import { signAckPdf } from './pdfSigningService';
 
 let latestConfirmation: AckConfirmationSummary | null = null;
 
+const SUBMIT_SIGNED_ACK_URL = 'https://kfly3zd6rvwgeefwoprl5simhy0jutnk.lambda-url.us-east-1.on.aws/';
+
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const buildCode = () => `ACK-${Date.now().toString().slice(-8)}`;
 const buildShortCode = () => `ACK-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
 const formatTimestamp = (date: Date) => formatDateTime(date);
+
+const toBase64 = (bytes: Uint8Array) => {
+  let binary = '';
+
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+
+  return btoa(binary);
+};
 
 const validateSignaturePayload = (payload: Pick<SignedAckPayload, 'signerName' | 'signatureDataUrl'>) => {
   if (!payload.signerName || payload.signerName.trim().length < 3) {
@@ -58,25 +70,58 @@ export const ackService = {
   },
 
   async submitSignedAck(payload: SignedAckPayload): Promise<SubmitSignedAckResponse> {
-    await delay(900);
     validateSignaturePayload(payload);
 
     if (!payload.accepted) {
       throw new Error('El acuse debe estar aceptado para su registro.');
     }
 
-    const confirmationCode = buildCode();
+    const confirmationCode = payload.confirmationCode || buildCode();
+    const signedAt = payload.signedAt || formatTimestamp(new Date());
+    const response = await fetch(SUBMIT_SIGNED_ACK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        token: payload.ackId,
+        customerEmail: payload.customerEmail,
+        customerName: payload.customerName || payload.signerName.trim(),
+        documentNumber: payload.documentNumber,
+        signedAt,
+        signatureDataUrl: payload.signatureDataUrl,
+        signedPdfBase64: toBase64(payload.signedPdfBytes)
+      })
+    });
+
+    const result = (await response.json()) as {
+      success?: boolean;
+      message?: string;
+      ackUrl?: string;
+      signatureUrl?: string;
+      invoiceUrl?: string;
+    };
+
+    if (!response.ok || !result.success || !result.invoiceUrl || !result.ackUrl || !result.signatureUrl) {
+      throw new Error(result.message || 'No fue posible registrar el acuse firmado.');
+    }
+
     latestConfirmation = {
       ...initialConfirmationMock,
       ackId: payload.ackId,
-      documentNumber: pendingAckMock.documentNumber,
+      documentNumber: payload.documentNumber || pendingAckMock.documentNumber,
       signerName: payload.signerName.trim(),
-      signedAt: payload.signedAt || formatTimestamp(new Date()),
-      confirmationCode: payload.confirmationCode || confirmationCode,
+      signedAt,
+      confirmationCode,
       status: 'Acuse firmado'
     };
 
-    return { confirmationCode: payload.confirmationCode || confirmationCode };
+    return {
+      confirmationCode,
+      invoiceUrl: result.invoiceUrl,
+      ackUrl: result.ackUrl,
+      signatureUrl: result.signatureUrl
+    };
   },
 
   getLastConfirmation(): AckConfirmationSummary | null {

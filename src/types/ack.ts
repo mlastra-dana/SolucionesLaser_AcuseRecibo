@@ -16,6 +16,10 @@ export interface SignedAckPayload {
   signatureDataUrl: string;
   signedAt: string;
   confirmationCode: string;
+  signedPdfBytes: Uint8Array;
+  customerEmail?: string;
+  customerName?: string;
+  documentNumber?: string;
 }
 
 export interface SignAckPdfRequest {
@@ -47,6 +51,9 @@ export interface SignedPreviewResult {
 
 export interface SubmitSignedAckResponse {
   confirmationCode: string;
+  invoiceUrl: string;
+  ackUrl: string;
+  signatureUrl: string;
 }
 
 export interface AckConfirmationSummary {
