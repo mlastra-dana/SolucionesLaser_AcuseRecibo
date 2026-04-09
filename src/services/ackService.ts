@@ -12,7 +12,7 @@ import { signAckPdf } from './pdfSigningService';
 
 let latestConfirmation: AckConfirmationSummary | null = null;
 
-const SUBMIT_SIGNED_ACK_URL = 'https://kfly3zd6rvwgeefwoprl5simhy0jutnk.lambda-url.us-east-1.on.aws/';
+const SUBMIT_SIGNED_ACK_URL = import.meta.env.VITE_SUBMIT_SIGNED_ACK_URL;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -70,6 +70,10 @@ export const ackService = {
   },
 
   async submitSignedAck(payload: SignedAckPayload): Promise<SubmitSignedAckResponse> {
+    if (!SUBMIT_SIGNED_ACK_URL) {
+      throw new Error('No se ha configurado VITE_SUBMIT_SIGNED_ACK_URL.');
+    }
+
     validateSignaturePayload(payload);
 
     if (!payload.accepted) {
