@@ -3,7 +3,7 @@ import { Duration } from 'aws-cdk-lib';
 import { CorsHttpMethod, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
-import { submitSignedAck } from './functions/submit-signed-ack/resource';
+import { submitSignedAck } from './functions/submit-signed-ack/resource.js';
 
 const requiredEnv = (name: 'ACK_BUCKET_NAME' | 'ALLOWED_ORIGIN') => {
   const value = process.env[name];
