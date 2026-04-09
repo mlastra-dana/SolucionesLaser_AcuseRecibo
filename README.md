@@ -10,7 +10,7 @@ Este portal permite que un usuario:
 - genere dentro del frontend un preview del documento firmado,
 - confirme el acuse y vea la pantalla final.
 
-La integracion real con AWS Lambda/API y el envio de correo se implementara en una fase posterior.
+El portal genera el PDF firmado en frontend y consume una Lambda externa para persistir el PDF y la firma en S3.
 
 ## Stack
 - React 18
@@ -47,31 +47,22 @@ En Amplify Hosting, configura redirección para SPA:
 - Target address: `/index.html`
 - Type: `200 (Rewrite)`
 
-## Backend real con Amplify Gen 2
-- Backend code-first en `amplify/`.
-- Lambda HTTP `submit-signed-ack` expuesta en `POST /submit-signed-ack`.
-- La Lambda:
-  - recibe el PDF firmado y la firma desde frontend,
-  - guarda ambos archivos en S3,
-  - responde `ackUrl`, `signatureUrl` e `invoiceUrl`,
-  - no envía correo y no dispara DANA en esta fase.
+## Integración actual con Lambda
+El frontend consume una Lambda externa mediante `VITE_SUBMIT_SIGNED_ACK_URL`.
 
-### Variables de entorno requeridas
-- `ACK_BUCKET_NAME`
-- `ACK_BUCKET_REGION`
-- `ALLOWED_ORIGIN`
-- `INVOICE_URL`
+La Lambda debe:
+- aceptar `POST` y `OPTIONS`,
+- recibir `token`, `signedAt`, `signatureDataUrl` y `signedPdfBase64`,
+- guardar firma y PDF en S3,
+- responder `ackUrl`, `signatureUrl` e `invoiceUrl`.
 
-Valor requerido para `INVOICE_URL` en esta demo:
-```text
-https://wsqa.solucioneslaser.com/pruebapdf-war/recursos/services/generar/flbzlgUTxUphYyRhGjRMuA==
-```
+Variable de entorno requerida en el frontend:
+- `VITE_SUBMIT_SIGNED_ACK_URL`
 
-### Consumo del endpoint desde frontend
-El frontend actual no fue modificado. Para conectar el flujo real, el submit final debe hacer un `POST` JSON al endpoint publicado por Amplify:
+Ejemplo de consumo:
 
 ```ts
-const response = await fetch(`${apiBaseUrl}/submit-signed-ack`, {
+const response = await fetch(import.meta.env.VITE_SUBMIT_SIGNED_ACK_URL, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
@@ -110,5 +101,4 @@ if (result.success && result.invoiceUrl) {
 - La firma se captura en frontend y se serializa como imagen PNG en base64 (`signatureDataUrl`).
 - El PDF base del acuse se genera/carga en frontend y se renderiza en preview con `pdfjs-dist`.
 - El servicio `pdfSigningService` inserta la firma en el PDF real con `pdf-lib` y regenera el archivo firmado.
-- El mock `submitSignedAck` sigue disponible mientras se conecta el frontend al endpoint real.
 - La siguiente fase podra agregar correo y/o integracion con DANA sin cambiar este contrato base.

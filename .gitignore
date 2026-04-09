@@ -1,5 +1,6 @@
 # Dependencies
 node_modules
+.npm
 
 # Build outputs
 dist
@@ -27,9 +28,3 @@ pnpm-debug.log*
 
 # TypeScript
 *.tsbuildinfo
-
-# Amplify
-.amplify
-amplify/.config/local-*
-amplify/logs
-amplify/mock-data
