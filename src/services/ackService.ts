@@ -14,7 +14,11 @@ import { signAckPdf } from './pdfSigningService';
 let latestConfirmation: AckConfirmationSummary | null = null;
 
 const SUBMIT_SIGNED_ACK_URL = import.meta.env.VITE_SUBMIT_SIGNED_ACK_URL;
-const ACK_STATUS_URL = SUBMIT_SIGNED_ACK_URL?.replace(/\/submit-signed-ack$/, '/ack-status');
+const ACK_STATUS_URL = SUBMIT_SIGNED_ACK_URL;
+const DEMO_INVOICE_URL =
+  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? '/mock/factura-real.pdf'
+    : null;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -120,13 +124,13 @@ export const ackService = {
       signerName: payload.signerName.trim(),
       signedAt,
       confirmationCode,
-      invoiceUrl: result.invoiceUrl,
+      invoiceUrl: DEMO_INVOICE_URL || result.invoiceUrl,
       status: 'Acuse firmado'
     };
 
     return {
       confirmationCode,
-      invoiceUrl: result.invoiceUrl,
+      invoiceUrl: DEMO_INVOICE_URL || result.invoiceUrl,
       ackUrl: result.ackUrl,
       signatureUrl: result.signatureUrl
     };
@@ -159,7 +163,7 @@ export const ackService = {
       signerName: result.data.signerName,
       signedAt: result.data.signedAt,
       confirmationCode: result.data.confirmationCode,
-      invoiceUrl: result.data.invoiceUrl,
+      invoiceUrl: DEMO_INVOICE_URL || result.data.invoiceUrl,
       status: result.data.status
     };
 
