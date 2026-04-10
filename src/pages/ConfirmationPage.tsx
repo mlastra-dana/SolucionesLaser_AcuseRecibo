@@ -12,9 +12,9 @@ function ConfirmationPage() {
 
   return (
     <AppShell>
-      <section className="mx-auto max-w-5xl space-y-6">
-        <Card className="space-y-6 border-brand-sand/70 text-center shadow-soft">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-brand-sand bg-brand-backgroundAlt">
+      <section className="mx-auto max-w-3xl space-y-6">
+        <Card className="space-y-6 border-brand-border text-center shadow-soft">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-brand-border bg-brand-background">
             <span className="text-2xl text-brand-orange" aria-hidden="true">
               ✓
             </span>
@@ -28,7 +28,7 @@ function ConfirmationPage() {
           </div>
 
           {confirmation ? (
-            <div className="rounded-[1.75rem] border border-brand-sand bg-brand-backgroundAlt p-5 text-left">
+            <div className="rounded-2xl border border-brand-border bg-brand-background p-4 text-left">
               <h2 className="text-sm font-semibold text-brand-ink">Resumen de confirmación</h2>
               <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -63,11 +63,8 @@ function ConfirmationPage() {
             <div className="space-y-4 text-left">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-orange">Documento disponible</p>
-                  <h2 className="mt-1 text-lg font-semibold text-brand-ink">Factura</h2>
-                  <p className="text-sm text-brand-muted">
-                    Puedes revisarla aqui mismo o descargarla directamente.
-                  </p>
+                  <h2 className="text-base font-semibold text-brand-ink">Factura</h2>
+                  <p className="mt-1 text-sm text-brand-muted">Puedes revisarla aqui mismo o descargarla directamente.</p>
                 </div>
 
                 <div className="flex flex-wrap gap-3">
@@ -80,7 +77,7 @@ function ConfirmationPage() {
                 </div>
               </div>
 
-              <div className="overflow-hidden rounded-2xl border border-brand-border bg-brand-background">
+              <div className="overflow-hidden rounded-xl border border-brand-border bg-brand-background">
                 <iframe
                   title="Factura"
                   src={invoiceUrl}

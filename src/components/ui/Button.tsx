@@ -9,13 +9,12 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const baseClass =
-  'inline-flex items-center justify-center rounded-full px-5 py-3 text-sm font-semibold transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60';
+  'inline-flex items-center justify-center rounded-xl px-4 py-2.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60';
 
 const variantClass: Record<ButtonVariant, string> = {
-  primary: 'bg-brand-orange text-white shadow-card hover:-translate-y-0.5 hover:bg-brand-orangeHover',
-  secondary:
-    'border border-brand-border bg-white text-brand-ink hover:-translate-y-0.5 hover:bg-brand-backgroundAlt',
-  ghost: 'text-brand-ink hover:bg-brand-backgroundAlt'
+  primary: 'bg-brand-orange text-white hover:bg-brand-orangeHover',
+  secondary: 'bg-brand-surface text-brand-ink border border-brand-border hover:bg-brand-background',
+  ghost: 'text-brand-ink hover:bg-brand-background'
 };
 
 function Button({ children, variant = 'primary', fullWidth = false, className = '', ...props }: ButtonProps) {

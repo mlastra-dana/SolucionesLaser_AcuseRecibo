@@ -7,7 +7,7 @@ type AlertProps = {
 
 function Alert({ title, children }: AlertProps) {
   return (
-    <div className="rounded-2xl border border-brand-border bg-brand-mist p-4">
+    <div className="rounded-xl border border-brand-border bg-brand-background p-4">
       {title ? <p className="text-sm font-semibold text-brand-ink">{title}</p> : null}
       <p className="mt-1 text-sm text-brand-muted">{children}</p>
     </div>

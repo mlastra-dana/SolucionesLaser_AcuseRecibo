@@ -74,16 +74,8 @@ function PdfPreview({ pdfUrl }: PdfPreviewProps) {
   }, [pdfUrl]);
 
   return (
-    <div className="rounded-[2rem] border border-brand-border bg-white/92 p-4 shadow-soft sm:p-5">
-      <div className="mb-4 flex items-center justify-between gap-3 px-1">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-orange">Vista documental</p>
-          <h2 className="mt-1 text-lg font-semibold text-brand-ink">Acuse digital</h2>
-        </div>
-        <span className="rounded-full bg-brand-mist px-3 py-1 text-xs font-medium text-brand-muted">PDF en vivo</span>
-      </div>
-
-      <div className="overflow-auto rounded-[1.5rem] border border-brand-border bg-brand-backgroundAlt/45 p-4">
+    <div className="rounded-xl border border-brand-border bg-brand-surface p-4 shadow-soft sm:p-5">
+      <div className="overflow-auto rounded-lg border border-brand-border bg-brand-background p-4">
         {isLoading ? <p className="mb-3 text-sm text-brand-muted">Cargando documento PDF...</p> : null}
         {error ? <p className="mb-3 text-sm text-brand-orange">{error}</p> : null}
         <canvas ref={canvasRef} className="mx-auto h-auto max-w-full bg-white shadow-card" />
