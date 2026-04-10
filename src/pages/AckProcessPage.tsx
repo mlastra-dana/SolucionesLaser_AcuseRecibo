@@ -140,11 +140,13 @@ function AckProcessPage() {
         signedPdfBytes: pdfBytes ?? basePdfBytes ?? new Uint8Array(),
         customerEmail: pendingAck.email,
         customerName: pendingAck.clientName,
-        documentNumber: pendingAck.documentNumber
+        documentNumber: pendingAck.documentNumber,
+        invoiceUrl: pendingAck.invoiceUrl
       });
       navigate('/confirmacion');
-    } catch {
-      setSubmitError('No fue posible completar el tramite. Intenta nuevamente en unos segundos.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No fue posible completar el tramite.';
+      setSubmitError(message);
     } finally {
       setIsProcessing(false);
     }

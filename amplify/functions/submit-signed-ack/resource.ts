@@ -1,7 +1,7 @@
 import { defineFunction } from '@aws-amplify/backend';
 
 const getRequiredEnv = () => {
-  const names = ['ACK_BUCKET_NAME', 'ACK_BUCKET_REGION', 'ALLOWED_ORIGIN', 'INVOICE_URL'] as const;
+  const names = ['ACK_BUCKET_NAME', 'ACK_BUCKET_REGION', 'ALLOWED_ORIGIN'] as const;
 
   return names.reduce<Record<(typeof names)[number], string>>((accumulator, name) => {
     const value = process.env[name];

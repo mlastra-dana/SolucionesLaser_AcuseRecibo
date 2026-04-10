@@ -5,18 +5,18 @@ module.exports = {
     extend: {
       colors: {
         brand: {
-          orange: '#d86c34',
-          orangeHover: '#b95624',
-          ink: '#111827',
-          muted: '#6B7280',
-          surface: '#FFFFFF',
-          background: '#F5F7FA',
-          border: '#E5E7EB'
+          orange: '#2f41ff',
+          orangeHover: '#1f2fd6',
+          ink: '#f8fafc',
+          muted: '#c2c8d4',
+          surface: '#111827',
+          background: '#151d2a',
+          border: '#2b3546'
         }
       },
       boxShadow: {
-        soft: '0 10px 30px rgba(17, 24, 39, 0.06)',
-        card: '0 4px 14px rgba(17, 24, 39, 0.06)'
+        soft: '0 14px 36px rgba(47, 65, 255, 0.10)',
+        card: '0 6px 18px rgba(0, 0, 0, 0.24)'
       },
       borderRadius: {
         xl: '1rem',

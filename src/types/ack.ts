@@ -7,6 +7,7 @@ export interface PendingAck {
   documentNumber: string;
   issueDate: string;
   basePdfUrl: string;
+  invoiceUrl: string;
 }
 
 export interface SignedAckPayload {
@@ -20,6 +21,7 @@ export interface SignedAckPayload {
   customerEmail?: string;
   customerName?: string;
   documentNumber?: string;
+  invoiceUrl?: string;
 }
 
 export interface SignAckPdfRequest {

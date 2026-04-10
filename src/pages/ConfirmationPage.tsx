@@ -23,7 +23,7 @@ function ConfirmationPage() {
           <div className="space-y-2">
             <h1 className="text-3xl font-bold text-brand-ink">Acuse firmado correctamente</h1>
             <p className="text-sm text-brand-muted sm:text-base">
-              Tu acuse de recibo fue firmado y registrado. Ya puedes visualizar o descargar la factura desde esta pantalla.
+              Tu acuse de recibo fue firmado y registrado. Ya puedes descargar la factura asociada desde esta pantalla.
             </p>
           </div>
 
@@ -64,25 +64,14 @@ function ConfirmationPage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-semibold text-brand-ink">Factura</h2>
-                  <p className="mt-1 text-sm text-brand-muted">Puedes revisarla aqui mismo o descargarla directamente.</p>
+                  <p className="mt-1 text-sm text-brand-muted">Descarga la factura generada para este trámite.</p>
                 </div>
 
                 <div className="flex flex-wrap gap-3">
                   <a href={invoiceUrl} download className="inline-flex">
                     <Button>Descargar factura</Button>
                   </a>
-                  <a href={invoiceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex">
-                    <Button variant="secondary">Abrir en otra pestaña</Button>
-                  </a>
                 </div>
-              </div>
-
-              <div className="overflow-hidden rounded-xl border border-brand-border bg-brand-background">
-                <iframe
-                  title="Factura"
-                  src={invoiceUrl}
-                  className="h-[720px] w-full bg-white"
-                />
               </div>
             </div>
           ) : null}

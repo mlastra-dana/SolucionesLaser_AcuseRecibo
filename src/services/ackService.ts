@@ -92,6 +92,7 @@ export const ackService = {
         customerEmail: payload.customerEmail,
         customerName: payload.customerName || payload.signerName.trim(),
         documentNumber: payload.documentNumber,
+        invoiceUrl: payload.invoiceUrl,
         signedAt,
         signatureDataUrl: payload.signatureDataUrl,
         signedPdfBase64: toBase64(payload.signedPdfBytes)

@@ -7,6 +7,7 @@ type SubmitSignedAckRequest = {
   customerEmail?: unknown;
   customerName?: unknown;
   documentNumber?: unknown;
+  invoiceUrl?: unknown;
   signedAt?: unknown;
   signatureDataUrl?: unknown;
   signedPdfBase64?: unknown;
@@ -25,7 +26,6 @@ const requiredEnv = (name: string) => {
 const bucketName = requiredEnv('ACK_BUCKET_NAME');
 const bucketRegion = requiredEnv('ACK_BUCKET_REGION');
 const allowedOrigin = requiredEnv('ALLOWED_ORIGIN');
-const invoiceUrl = requiredEnv('INVOICE_URL');
 
 const s3Client = new S3Client({ region: bucketRegion });
 
@@ -52,7 +52,7 @@ const emptyResponse = (statusCode: number): APIGatewayProxyStructuredResultV2 =>
 
 const getRequiredString = (
   payload: SubmitSignedAckRequest,
-  fieldName: 'token' | 'signedAt' | 'signatureDataUrl' | 'signedPdfBase64'
+  fieldName: 'token' | 'signedAt' | 'signatureDataUrl' | 'signedPdfBase64' | 'invoiceUrl'
 ) => {
   const value = payload[fieldName];
 
@@ -132,6 +132,7 @@ export const handler = async (
   try {
     const payload = JSON.parse(event.body ?? '{}') as SubmitSignedAckRequest;
     const token = getRequiredString(payload, 'token');
+    const invoiceUrl = getRequiredString(payload, 'invoiceUrl');
     const signedAt = getRequiredString(payload, 'signedAt');
     const signatureDataUrl = getRequiredString(payload, 'signatureDataUrl');
     const signedPdfBase64 = getRequiredString(payload, 'signedPdfBase64');
