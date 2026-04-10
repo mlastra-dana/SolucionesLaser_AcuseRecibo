@@ -9,7 +9,7 @@ export const pendingAckMock: PendingAck = {
   documentNumber: 'FAC-2026-000184',
   issueDate: '17/03/2026',
   basePdfUrl: '/mock/acuse-base.pdf',
-  invoiceUrl: 'https://wsqa.solucioneslaser.com/pruebapdf-war/recursos/services/generar/flbzlgUTxUphYyRhGjRMuA=='
+  invoiceUrl: '/mock/factura-real.pdf'
 };
 
 export const initialConfirmationMock: AckConfirmationSummary = {

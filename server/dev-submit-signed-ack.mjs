@@ -137,18 +137,20 @@ const server = createServer(async (request, response) => {
       const signatureFile = path.join(outputDir, 'signature.png');
       const ackFile = path.join(outputDir, 'acuse-firmado.pdf');
       const invoiceFile = path.join(outputDir, 'factura-base.pdf');
+      const isRemoteInvoice = /^https?:\/\//i.test(invoiceUrl);
+      const isLocalAssetInvoice = invoiceUrl.startsWith('/');
 
       await mkdir(outputDir, { recursive: true });
       await Promise.all([
         writeFile(signatureFile, signatureBuffer),
         writeFile(ackFile, pdfBuffer),
-        invoiceUrl.startsWith('http')
+        isRemoteInvoice || isLocalAssetInvoice
           ? Promise.resolve()
           : readFile(invoicePath).then((invoiceBuffer) => writeFile(invoiceFile, invoiceBuffer))
       ]);
 
       const baseUrl = `http://localhost:${port}/files/${relativeDir}`;
-      const resolvedInvoiceUrl = invoiceUrl.startsWith('http') ? invoiceUrl : `${baseUrl}/factura-base.pdf`;
+      const resolvedInvoiceUrl = isRemoteInvoice || isLocalAssetInvoice ? invoiceUrl : `${baseUrl}/factura-base.pdf`;
 
       sendJson(response, 200, {
         success: true,

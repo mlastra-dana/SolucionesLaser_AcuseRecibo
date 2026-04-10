@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import PdfPreview from '../components/document/PdfPreview';
 import AppShell from '../components/layout/AppShell';
 import Alert from '../components/ui/Alert';
 import Button from '../components/ui/Button';
@@ -32,20 +33,8 @@ function ConfirmationPage() {
               <h2 className="text-sm font-semibold text-brand-ink">Resumen de confirmación</h2>
               <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
-                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Documento</dt>
-                  <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.documentNumber}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Firmante</dt>
-                  <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.signerName}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Fecha y hora</dt>
+                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Fecha y hora de firma</dt>
                   <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.signedAt}</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wide text-brand-muted">Código de confirmación</dt>
-                  <dd className="mt-1 text-sm font-medium text-brand-ink">{confirmation.confirmationCode}</dd>
                 </div>
                 <div>
                   <dt className="text-xs uppercase tracking-wide text-brand-muted">Estado</dt>
@@ -64,7 +53,7 @@ function ConfirmationPage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-base font-semibold text-brand-ink">Factura</h2>
-                  <p className="mt-1 text-sm text-brand-muted">Descarga la factura generada para este trámite.</p>
+                  <p className="mt-1 text-sm text-brand-muted">Revisa la factura en pantalla o descárgala directamente.</p>
                 </div>
 
                 <div className="flex flex-wrap gap-3">
@@ -73,6 +62,8 @@ function ConfirmationPage() {
                   </a>
                 </div>
               </div>
+
+              <PdfPreview pdfUrl={invoiceUrl} />
             </div>
           ) : null}
 
