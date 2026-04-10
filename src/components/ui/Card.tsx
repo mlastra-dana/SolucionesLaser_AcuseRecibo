@@ -7,7 +7,7 @@ type CardProps = HTMLAttributes<HTMLDivElement> & {
 function Card({ children, className = '', ...props }: CardProps) {
   return (
     <div
-      className={`rounded-2xl border border-brand-border bg-brand-surface p-6 shadow-card ${className}`.trim()}
+      className={`rounded-3xl border border-brand-border/80 bg-white/92 p-6 shadow-card backdrop-blur-sm ${className}`.trim()}
       {...props}
     >
       {children}

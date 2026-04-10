@@ -13,7 +13,7 @@ function Checkbox({ label, id, className = '', ...props }: CheckboxProps) {
         className={`mt-1 h-4 w-4 rounded border-brand-border text-brand-orange focus:ring-brand-orange ${className}`.trim()}
         {...props}
       />
-      <span>{label}</span>
+      <span className="leading-6 text-brand-muted">{label}</span>
     </label>
   );
 }

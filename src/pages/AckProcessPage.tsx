@@ -130,7 +130,7 @@ function AckProcessPage() {
 
     setIsProcessing(true);
     try {
-      const result = await ackService.submitSignedAck({
+      await ackService.submitSignedAck({
         ackId: pendingAck.ackId,
         signerName: pendingAck.signerName,
         accepted,
@@ -142,7 +142,6 @@ function AckProcessPage() {
         customerName: pendingAck.clientName,
         documentNumber: pendingAck.documentNumber
       });
-      window.open(result.invoiceUrl, '_blank', 'noopener,noreferrer');
       navigate('/confirmacion');
     } catch {
       setSubmitError('No fue posible completar el tramite. Intenta nuevamente en unos segundos.');
@@ -153,10 +152,44 @@ function AckProcessPage() {
 
   return (
     <AppShell>
-      <section className="space-y-5">
-        <h1 className="text-2xl font-bold text-brand-ink sm:text-3xl">Acuse de recibo de factura digital</h1>
+      <section className="space-y-6">
+        <div className="overflow-hidden rounded-[2rem] bg-brand-navy text-white shadow-soft">
+          <div className="grid gap-8 px-6 py-8 sm:px-8 lg:grid-cols-[1.35fr_0.85fr] lg:px-10">
+            <div className="space-y-4">
+              <span className="inline-flex rounded-full border border-white/15 bg-white/10 px-4 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-brand-sand">
+                Soluciones Laser
+              </span>
+              <div className="space-y-3">
+                <h1 className="max-w-3xl text-3xl font-semibold leading-tight sm:text-4xl">
+                  Confirma la recepcion de tu factura digital con una firma simple y segura.
+                </h1>
+                <p className="max-w-2xl text-sm leading-7 text-white/76 sm:text-base">
+                  Revisa el acuse, valida los datos del documento y confirma la recepcion desde este portal.
+                  Al completar el proceso, la factura quedara disponible inmediatamente para su consulta.
+                </p>
+              </div>
+            </div>
 
-        <Card>
+            <div className="grid gap-3 rounded-[1.75rem] border border-white/10 bg-white/8 p-5 text-sm text-white/84">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-brand-sand">Cliente</p>
+                <p className="mt-2 text-base font-semibold text-white">{summary.clientName}</p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-brand-sand">Documento</p>
+                  <p className="mt-2 font-medium text-white">{summary.documentNumber}</p>
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-brand-sand">Estado</p>
+                  <p className="mt-2 font-medium text-white">{statusLabel}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <Card className="border-brand-sand/60">
           <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <dt className="text-xs uppercase tracking-wide text-brand-muted">Cliente / razón social</dt>
@@ -172,7 +205,7 @@ function AckProcessPage() {
             </div>
             <div>
               <dt className="text-xs uppercase tracking-wide text-brand-muted">Estado</dt>
-              <dd className="mt-1 inline-flex rounded-full border border-brand-border bg-brand-background px-2.5 py-1 text-xs font-semibold text-brand-ink">
+              <dd className="mt-1 inline-flex rounded-full border border-brand-sand bg-brand-backgroundAlt px-3 py-1 text-xs font-semibold text-brand-ink">
                 {statusLabel}
               </dd>
             </div>
@@ -182,11 +215,14 @@ function AckProcessPage() {
         <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
           <PdfPreview pdfUrl={pdfUrl} />
 
-          <Card className="space-y-4">
-            <h2 className="text-base font-semibold text-brand-ink">Firma del receptor</h2>
-            <p className="text-sm text-brand-muted">
+          <Card className="space-y-5 border-brand-sand/70">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-orange">Validacion final</p>
+              <h2 className="text-xl font-semibold text-brand-ink">Firma del receptor</h2>
+              <p className="text-sm leading-6 text-brand-muted">
               Firma dentro del recuadro para confirmar la recepción del documento.
-            </p>
+              </p>
+            </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <SignaturePad
@@ -220,7 +256,7 @@ function AckProcessPage() {
                   setSignatureCode('');
                 }}
               />
-              {signatureError ? <p className="text-xs text-brand-orange">{signatureError}</p> : null}
+              {signatureError ? <p className="text-xs font-medium text-brand-orange">{signatureError}</p> : null}
 
               <Checkbox
                 id="accept-ack"
@@ -242,7 +278,7 @@ function AckProcessPage() {
                     : 'Aceptar acuse'}
               </Button>
 
-              {submitError ? <p className="text-sm text-brand-orange">{submitError}</p> : null}
+              {submitError ? <p className="text-sm font-medium text-brand-orange">{submitError}</p> : null}
             </form>
           </Card>
         </div>

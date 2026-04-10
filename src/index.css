@@ -1,22 +1,41 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Sora:wght@400;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  font-family: 'Inter', sans-serif;
+  font-family: 'DM Sans', sans-serif;
+  color: #14233d;
+  background:
+    radial-gradient(circle at top left, rgba(216, 108, 52, 0.18), transparent 28%),
+    radial-gradient(circle at top right, rgba(16, 33, 58, 0.12), transparent 24%),
+    linear-gradient(180deg, #f9f6f1 0%, #f4efe7 100%);
 }
 
 body {
   @apply bg-brand-background text-brand-ink antialiased;
+  min-height: 100vh;
 }
 
 * {
   @apply border-brand-border;
 }
 
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: 'Sora', sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
 :focus-visible {
-  outline: 2px solid #DD5736;
+  outline: 2px solid #d86c34;
   outline-offset: 2px;
 }

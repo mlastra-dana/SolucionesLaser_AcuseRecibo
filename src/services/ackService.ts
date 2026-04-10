@@ -117,6 +117,7 @@ export const ackService = {
       signerName: payload.signerName.trim(),
       signedAt,
       confirmationCode,
+      invoiceUrl: result.invoiceUrl,
       status: 'Acuse firmado'
     };
 

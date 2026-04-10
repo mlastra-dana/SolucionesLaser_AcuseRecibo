@@ -8,12 +8,13 @@ import { ackService } from '../services/ackService';
 
 function ConfirmationPage() {
   const confirmation = useMemo(() => ackService.getLastConfirmation(), []);
+  const invoiceUrl = confirmation?.invoiceUrl ?? null;
 
   return (
     <AppShell>
-      <section className="mx-auto max-w-3xl space-y-6">
-        <Card className="space-y-6 border-brand-border text-center shadow-soft">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-brand-border bg-brand-background">
+      <section className="mx-auto max-w-5xl space-y-6">
+        <Card className="space-y-6 border-brand-sand/70 text-center shadow-soft">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-brand-sand bg-brand-backgroundAlt">
             <span className="text-2xl text-brand-orange" aria-hidden="true">
               ✓
             </span>
@@ -22,12 +23,12 @@ function ConfirmationPage() {
           <div className="space-y-2">
             <h1 className="text-3xl font-bold text-brand-ink">Acuse firmado correctamente</h1>
             <p className="text-sm text-brand-muted sm:text-base">
-              Tu acuse de recibo fue firmado y registrado. La factura será enviada en un correo separado.
+              Tu acuse de recibo fue firmado y registrado. Ya puedes visualizar o descargar la factura desde esta pantalla.
             </p>
           </div>
 
           {confirmation ? (
-            <div className="rounded-2xl border border-brand-border bg-brand-background p-4 text-left">
+            <div className="rounded-[1.75rem] border border-brand-sand bg-brand-backgroundAlt p-5 text-left">
               <h2 className="text-sm font-semibold text-brand-ink">Resumen de confirmación</h2>
               <dl className="mt-3 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -57,6 +58,37 @@ function ConfirmationPage() {
               No encontramos un acuse firmado en esta sesión. Puedes volver al inicio y completar el proceso.
             </Alert>
           )}
+
+          {invoiceUrl ? (
+            <div className="space-y-4 text-left">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-brand-orange">Documento disponible</p>
+                  <h2 className="mt-1 text-lg font-semibold text-brand-ink">Factura</h2>
+                  <p className="text-sm text-brand-muted">
+                    Puedes revisarla aqui mismo o descargarla directamente.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <a href={invoiceUrl} download className="inline-flex">
+                    <Button>Descargar factura</Button>
+                  </a>
+                  <a href={invoiceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex">
+                    <Button variant="secondary">Abrir en otra pestaña</Button>
+                  </a>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-2xl border border-brand-border bg-brand-background">
+                <iframe
+                  title="Factura"
+                  src={invoiceUrl}
+                  className="h-[720px] w-full bg-white"
+                />
+              </div>
+            </div>
+          ) : null}
 
           <Link to="/">
             <Button variant="secondary">Volver al inicio</Button>

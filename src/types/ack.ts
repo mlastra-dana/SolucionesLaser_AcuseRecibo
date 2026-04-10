@@ -62,5 +62,6 @@ export interface AckConfirmationSummary {
   signerName: string;
   signedAt: string;
   confirmationCode: string;
+  invoiceUrl?: string;
   status: 'Pendiente de procesamiento' | 'Acuse firmado' | 'Documento firmado';
 }
