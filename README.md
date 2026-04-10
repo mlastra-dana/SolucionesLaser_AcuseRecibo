@@ -31,6 +31,11 @@ npm install
 npm run dev
 ```
 
+## Datos de demo
+En esta version demo, los datos usados para generar el acuse en frontend estan alineados manualmente con la factura local `public/mock/factura-real.pdf`.
+
+La fuente actual de esos datos es `src/mocks/ackMock.ts`, asi que cualquier cambio visual en la factura demo debe reflejarse tambien ahi para que acuse y factura sigan siendo coherentes.
+
 ## Build de producción
 ```bash
 npm run build

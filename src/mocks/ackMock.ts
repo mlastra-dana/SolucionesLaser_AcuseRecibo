@@ -2,12 +2,13 @@ import { AckConfirmationSummary, PendingAck } from '../types/ack';
 
 export const pendingAckMock: PendingAck = {
   ackId: 'ACK-DOC-2026-000184',
-  clientName: 'Soluciones Láser C.A.',
+  // Demo note: these fields are intentionally aligned by hand with public/mock/factura-real.pdf
+  clientName: 'Tu empresa',
   signerName: 'María Fernanda Pérez',
-  identification: 'J-41234567-8',
-  email: 'facturacion@solucioneslaser.com',
-  documentNumber: 'FAC-2026-000184',
-  issueDate: '17/03/2026',
+  identification: 'J-00000000-0',
+  email: 'tuempresa@gmail.com',
+  documentNumber: '00000001',
+  issueDate: '2025-07-28',
   basePdfUrl: '/mock/acuse-base.pdf',
   invoiceUrl: '/mock/factura-real.pdf'
 };
