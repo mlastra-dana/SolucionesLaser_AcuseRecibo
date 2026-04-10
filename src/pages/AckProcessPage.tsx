@@ -36,25 +36,30 @@ function AckProcessPage() {
   const isSigned = Boolean(signedAt && signatureCode);
   const canSubmit = Boolean(pendingAck && hasSignature && accepted && !isPreparingPreview && !isProcessing);
   const statusLabel = isSigned ? 'Documento firmado' : 'Pendiente de firma';
+  const inboundToken = searchParams.get('token') || searchParams.get('dana') || '';
 
   useEffect(() => {
     let mounted = true;
     let initialBaseUrl: string | null = null;
 
     const load = async () => {
-      const tokenFromUrl = searchParams.get('token');
-
-      if (tokenFromUrl) {
-        const signedStatus = await ackService.getSignedAckStatus(tokenFromUrl);
+      if (inboundToken) {
+        const signedStatus = await ackService.getSignedAckStatus(inboundToken);
 
         if (signedStatus) {
-          navigate(`/confirmacion?token=${encodeURIComponent(tokenFromUrl)}`, { replace: true });
+          navigate(`/confirmacion?token=${encodeURIComponent(inboundToken)}`, { replace: true });
           return;
         }
       }
 
       const ack = await ackService.getPendingAck();
-      const basePdf = await createBaseAckPdf(ack);
+      const resolvedAck = inboundToken
+        ? {
+            ...ack,
+            ackId: inboundToken
+          }
+        : ack;
+      const basePdf = await createBaseAckPdf(resolvedAck);
       const url = toBlobUrl(basePdf);
 
       if (!mounted) {
@@ -63,7 +68,7 @@ function AckProcessPage() {
       }
 
       initialBaseUrl = url;
-      setPendingAck(ack);
+      setPendingAck(resolvedAck);
       setBasePdfBytes(basePdf);
       setBasePdfUrl(url);
       setPdfBytes(basePdf);
@@ -77,7 +82,7 @@ function AckProcessPage() {
         URL.revokeObjectURL(initialBaseUrl);
       }
     };
-  }, [navigate, searchParams]);
+  }, [inboundToken, navigate, searchParams]);
 
   const summary = useMemo(() => pendingAck ?? pendingAckMock, [pendingAck]);
 

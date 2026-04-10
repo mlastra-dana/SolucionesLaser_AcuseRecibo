@@ -15,10 +15,7 @@ let latestConfirmation: AckConfirmationSummary | null = null;
 
 const SUBMIT_SIGNED_ACK_URL = import.meta.env.VITE_SUBMIT_SIGNED_ACK_URL;
 const ACK_STATUS_URL = SUBMIT_SIGNED_ACK_URL;
-const DEMO_INVOICE_URL =
-  window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? '/mock/factura-real.pdf'
-    : null;
+const DEMO_INVOICE_URL = '/mock/factura-real.pdf';
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

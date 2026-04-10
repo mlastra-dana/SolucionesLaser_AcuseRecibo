@@ -11,7 +11,7 @@ function ConfirmationPage() {
   const [searchParams] = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const token = searchParams.get('token');
+  const token = searchParams.get('token') || searchParams.get('dana');
   const confirmation = useMemo(() => ackService.getLastConfirmation(), []);
   const invoiceUrl = confirmation?.invoiceUrl ?? null;
 
