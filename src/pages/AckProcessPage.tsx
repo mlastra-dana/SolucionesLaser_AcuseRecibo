@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import PdfPreview from '../components/document/PdfPreview';
 import AppShell from '../components/layout/AppShell';
 import SignaturePad from '../components/signature/SignaturePad';
@@ -17,6 +17,7 @@ const toBlobUrl = (bytes: Uint8Array) =>
 
 function AckProcessPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [pendingAck, setPendingAck] = useState<PendingAck | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [signatureDataUrl, setSignatureDataUrl] = useState('');
@@ -41,6 +42,17 @@ function AckProcessPage() {
     let initialBaseUrl: string | null = null;
 
     const load = async () => {
+      const tokenFromUrl = searchParams.get('token');
+
+      if (tokenFromUrl) {
+        const signedStatus = await ackService.getSignedAckStatus(tokenFromUrl);
+
+        if (signedStatus) {
+          navigate(`/confirmacion?token=${encodeURIComponent(tokenFromUrl)}`, { replace: true });
+          return;
+        }
+      }
+
       const ack = await ackService.getPendingAck();
       const basePdf = await createBaseAckPdf(ack);
       const url = toBlobUrl(basePdf);
@@ -65,7 +77,7 @@ function AckProcessPage() {
         URL.revokeObjectURL(initialBaseUrl);
       }
     };
-  }, []);
+  }, [navigate, searchParams]);
 
   const summary = useMemo(() => pendingAck ?? pendingAckMock, [pendingAck]);
 
@@ -143,7 +155,7 @@ function AckProcessPage() {
         documentNumber: pendingAck.documentNumber,
         invoiceUrl: pendingAck.invoiceUrl
       });
-      navigate('/confirmacion');
+      navigate(`/confirmacion?token=${encodeURIComponent(pendingAck.ackId)}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No fue posible completar el tramite.';
       setSubmitError(message);

@@ -2,6 +2,7 @@ import { initialConfirmationMock, pendingAckMock } from '../mocks/ackMock';
 import {
   AckConfirmationSummary,
   PendingAck,
+  SignedAckStatus,
   SignedPreviewPayload,
   SignedPreviewResult,
   SignedAckPayload,
@@ -13,6 +14,7 @@ import { signAckPdf } from './pdfSigningService';
 let latestConfirmation: AckConfirmationSummary | null = null;
 
 const SUBMIT_SIGNED_ACK_URL = import.meta.env.VITE_SUBMIT_SIGNED_ACK_URL;
+const ACK_STATUS_URL = SUBMIT_SIGNED_ACK_URL?.replace(/\/submit-signed-ack$/, '/ack-status');
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -128,6 +130,40 @@ export const ackService = {
       ackUrl: result.ackUrl,
       signatureUrl: result.signatureUrl
     };
+  },
+
+  async getSignedAckStatus(token: string): Promise<SignedAckStatus | null> {
+    if (!ACK_STATUS_URL || !token.trim()) {
+      return null;
+    }
+
+    const response = await fetch(`${ACK_STATUS_URL}?token=${encodeURIComponent(token.trim())}`);
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    const result = (await response.json()) as {
+      success?: boolean;
+      message?: string;
+      data?: SignedAckStatus;
+    };
+
+    if (!response.ok || !result.success || !result.data) {
+      throw new Error(result.message || 'No fue posible consultar el estado del acuse.');
+    }
+
+    latestConfirmation = {
+      ackId: result.data.ackId,
+      documentNumber: result.data.documentNumber,
+      signerName: result.data.signerName,
+      signedAt: result.data.signedAt,
+      confirmationCode: result.data.confirmationCode,
+      invoiceUrl: result.data.invoiceUrl,
+      status: result.data.status
+    };
+
+    return result.data;
   },
 
   getLastConfirmation(): AckConfirmationSummary | null {

@@ -56,13 +56,21 @@ En Amplify Hosting, configura redirección para SPA:
 El frontend consume una Lambda externa mediante `VITE_SUBMIT_SIGNED_ACK_URL`.
 
 La Lambda debe:
-- aceptar `POST` y `OPTIONS`,
-- recibir `token`, `signedAt`, `signatureDataUrl` y `signedPdfBase64`,
-- guardar firma y PDF en S3,
-- responder `ackUrl`, `signatureUrl` e `invoiceUrl`.
+- aceptar `POST`, `GET` y `OPTIONS`,
+- recibir `token`, `customerEmail`, `customerName`, `documentNumber`, `invoiceUrl`, `signedAt`, `signatureDataUrl` y `signedPdfBase64`,
+- guardar firma, PDF firmado y estado resumido en S3,
+- enviar correo con el acuse firmado adjunto,
+- responder `ackUrl`, `signatureUrl`, `invoiceUrl` y el estado del acuse por token.
 
 Variable de entorno requerida en el frontend:
 - `VITE_SUBMIT_SIGNED_ACK_URL`
+
+Variables de entorno requeridas en el backend de Amplify:
+- `ACK_BUCKET_NAME`
+- `ACK_BUCKET_REGION`
+- `ALLOWED_ORIGIN`
+- `FROM_EMAIL`
+- `PORTAL_BASE_URL`
 
 Ejemplo de consumo:
 
@@ -77,6 +85,7 @@ const response = await fetch(import.meta.env.VITE_SUBMIT_SIGNED_ACK_URL, {
     customerEmail,
     customerName,
     documentNumber,
+    invoiceUrl,
     signedAt,
     signatureDataUrl,
     signedPdfBase64
@@ -98,9 +107,12 @@ if (result.success && result.invoiceUrl) {
   "status": "SIGNED",
   "ackUrl": "https://...",
   "signatureUrl": "https://...",
-  "invoiceUrl": "https://wsqa.solucioneslaser.com/pruebapdf-war/recursos/services/generar/flbzlgUTxUphYyRhGjRMuA=="
+  "invoiceUrl": "https://...",
+  "confirmationCode": "ACK-AB12CD34"
 }
 ```
+
+Tambien se expone un `GET /ack-status?token=...` para que el portal pueda reabrirse directamente en la vista de acuse firmado cuando el usuario vuelva a entrar desde el correo original.
 
 ## Integración posterior (backend/Lambda)
 - La firma se captura en frontend y se serializa como imagen PNG en base64 (`signatureDataUrl`).

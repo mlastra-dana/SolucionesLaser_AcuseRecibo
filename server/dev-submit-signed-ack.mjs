@@ -94,6 +94,29 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && requestUrl.pathname === '/ack-status') {
+      const token = requestUrl.searchParams.get('token')?.trim();
+
+      if (!token) {
+        sendJson(response, 400, { success: false, message: 'Missing required query param: token' });
+        return;
+      }
+
+      const latestFile = path.join(storageRoot, token, 'latest.json');
+
+      try {
+        const latestContent = await readFile(latestFile, 'utf8');
+        sendJson(response, 200, {
+          success: true,
+          data: JSON.parse(latestContent)
+        });
+      } catch {
+        sendJson(response, 404, { success: false, message: 'Signed ack not found.' });
+      }
+
+      return;
+    }
+
     if (request.method === 'POST' && requestUrl.pathname === '/submit-signed-ack') {
       const rawBody = await readRequestBody(request);
       const payload = JSON.parse(rawBody || '{}');
@@ -134,6 +157,7 @@ const server = createServer(async (request, response) => {
       const uploadId = randomUUID();
       const relativeDir = path.join(token, uploadId);
       const outputDir = path.join(storageRoot, relativeDir);
+      const tokenDir = path.join(storageRoot, token);
       const signatureFile = path.join(outputDir, 'signature.png');
       const ackFile = path.join(outputDir, 'acuse-firmado.pdf');
       const invoiceFile = path.join(outputDir, 'factura-base.pdf');
@@ -141,6 +165,7 @@ const server = createServer(async (request, response) => {
       const isLocalAssetInvoice = invoiceUrl.startsWith('/');
 
       await mkdir(outputDir, { recursive: true });
+      await mkdir(tokenDir, { recursive: true });
       await Promise.all([
         writeFile(signatureFile, signatureBuffer),
         writeFile(ackFile, pdfBuffer),
@@ -151,13 +176,28 @@ const server = createServer(async (request, response) => {
 
       const baseUrl = `http://localhost:${port}/files/${relativeDir}`;
       const resolvedInvoiceUrl = isRemoteInvoice || isLocalAssetInvoice ? invoiceUrl : `${baseUrl}/factura-base.pdf`;
+      const confirmationCode = `ACK-${uploadId.slice(0, 8).toUpperCase()}`;
+      const signedStatus = {
+        ackId: token,
+        documentNumber: payload.documentNumber || '',
+        signerName: payload.customerName || '',
+        signedAt,
+        confirmationCode,
+        invoiceUrl: resolvedInvoiceUrl,
+        ackUrl: `${baseUrl}/acuse-firmado.pdf`,
+        signatureUrl: `${baseUrl}/signature.png`,
+        status: 'Acuse firmado'
+      };
+
+      await writeFile(path.join(tokenDir, 'latest.json'), JSON.stringify(signedStatus, null, 2));
 
       sendJson(response, 200, {
         success: true,
         status: 'SIGNED',
-        ackUrl: `${baseUrl}/acuse-firmado.pdf`,
-        signatureUrl: `${baseUrl}/signature.png`,
-        invoiceUrl: resolvedInvoiceUrl
+        ackUrl: signedStatus.ackUrl,
+        signatureUrl: signedStatus.signatureUrl,
+        invoiceUrl: resolvedInvoiceUrl,
+        confirmationCode
       });
       return;
     }

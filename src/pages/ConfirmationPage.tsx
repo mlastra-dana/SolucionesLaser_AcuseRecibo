@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import PdfPreview from '../components/document/PdfPreview';
 import AppShell from '../components/layout/AppShell';
 import Alert from '../components/ui/Alert';
@@ -8,8 +8,47 @@ import Card from '../components/ui/Card';
 import { ackService } from '../services/ackService';
 
 function ConfirmationPage() {
+  const [searchParams] = useSearchParams();
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const token = searchParams.get('token');
   const confirmation = useMemo(() => ackService.getLastConfirmation(), []);
   const invoiceUrl = confirmation?.invoiceUrl ?? null;
+
+  useEffect(() => {
+    if (confirmation || !token) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      setIsLoading(true);
+      setLoadError('');
+
+      try {
+        const result = await ackService.getSignedAckStatus(token);
+
+        if (!cancelled && !result) {
+          setLoadError('No encontramos un acuse firmado para este enlace.');
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLoadError(error instanceof Error ? error.message : 'No fue posible cargar la confirmación.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [confirmation, token]);
 
   return (
     <AppShell>
@@ -28,7 +67,9 @@ function ConfirmationPage() {
             </p>
           </div>
 
-          {confirmation ? (
+          {isLoading ? (
+            <Alert title="Cargando confirmación">Estamos recuperando el acuse firmado.</Alert>
+          ) : confirmation ? (
             <div className="rounded-2xl border border-brand-border bg-brand-background p-4 text-left">
               <h2 className="text-sm font-semibold text-brand-ink">Resumen de confirmación</h2>
               <dl className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -43,8 +84,8 @@ function ConfirmationPage() {
               </dl>
             </div>
           ) : (
-            <Alert title="Sin confirmación activa">
-              No encontramos un acuse firmado en esta sesión. Puedes volver al inicio y completar el proceso.
+            <Alert title={loadError ? 'No disponible' : 'Sin confirmación activa'}>
+              {loadError || 'No encontramos un acuse firmado en esta sesión. Puedes volver al inicio y completar el proceso.'}
             </Alert>
           )}
 

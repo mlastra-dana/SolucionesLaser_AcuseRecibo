@@ -58,6 +58,18 @@ export interface SubmitSignedAckResponse {
   signatureUrl: string;
 }
 
+export interface SignedAckStatus {
+  ackId: string;
+  documentNumber: string;
+  signerName: string;
+  signedAt: string;
+  confirmationCode: string;
+  invoiceUrl: string;
+  ackUrl: string;
+  signatureUrl: string;
+  status: 'Acuse firmado';
+}
+
 export interface AckConfirmationSummary {
   ackId: string;
   documentNumber: string;
