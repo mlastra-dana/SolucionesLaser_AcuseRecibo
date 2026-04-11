@@ -1,10 +1,10 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { SendRawEmailCommand, SESClient } from '@aws-sdk/client-ses';
 import { randomUUID } from 'node:crypto';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 
 type SubmitSignedAckRequest = {
   token?: unknown;
+  danaReference?: unknown;
   customerEmail?: unknown;
   customerName?: unknown;
   documentNumber?: unknown;
@@ -36,14 +36,17 @@ const requiredEnv = (name: string) => {
   return value;
 };
 
+const optionalEnv = (name: string) => process.env[name]?.trim() || '';
+
 const bucketName = requiredEnv('ACK_BUCKET_NAME');
 const bucketRegion = requiredEnv('ACK_BUCKET_REGION');
 const allowedOrigin = requiredEnv('ALLOWED_ORIGIN');
-const fromEmail = requiredEnv('FROM_EMAIL');
-const portalBaseUrl = requiredEnv('PORTAL_BASE_URL');
+const danaBaseUrl = optionalEnv('DANA_BASE_URL');
+const danaTriggerUrl = optionalEnv('DANA_TRIGGER_URL');
+const danaUsername = optionalEnv('DANA_USERNAME');
+const danaPassword = optionalEnv('DANA_PASSWORD');
 
 const s3Client = new S3Client({ region: bucketRegion });
-const sesClient = new SESClient({ region: bucketRegion });
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': allowedOrigin,
@@ -97,6 +100,13 @@ const getRequiredString = (
   return value.trim();
 };
 
+const optionalString = (payload: SubmitSignedAckRequest, fieldName: keyof SubmitSignedAckRequest) => {
+  const value = payload[fieldName];
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+};
+
+const sanitizeToken = (token: string) => token.replace(/[^a-zA-Z0-9-_]/g, '_').slice(0, 120);
+
 const decodeSignaturePng = (dataUrl: string) => {
   const match = dataUrl.match(/^data:image\/png;base64,(.+)$/i);
 
@@ -149,65 +159,80 @@ const buildObjectUrl = (key: string) => {
   return `https://${host}/${encodedKey}`;
 };
 
-const sendSignedAckEmail = async (params: {
-  toEmail: string;
-  customerName: string;
-  documentNumber: string;
-  token: string;
-  signedAt: string;
-  ackPdfBuffer: Buffer;
-}) => {
-  const boundary = `NextPart_${randomUUID()}`;
-  const portalLink = `${portalBaseUrl.replace(/\/$/, '')}/?token=${encodeURIComponent(params.token)}`;
-  const attachmentBase64 = params.ackPdfBuffer.toString('base64').replace(/(.{76})/g, '$1\n');
-  const subject = `Acuse firmado - Factura ${params.documentNumber}`;
-  const textBody = [
-    `Hola ${params.customerName},`,
-    '',
-    `Tu acuse de recibo de la factura ${params.documentNumber} fue firmado el ${params.signedAt}.`,
-    '',
-    'Adjuntamos el acuse firmado en PDF.',
-    `Tambien puedes volver al portal aqui: ${portalLink}`,
-    '',
-    'Equipo Soluciones Laser'
-  ].join('\n');
+const buildDanaAuthorizationHeader = () => {
+  if (!danaUsername || !danaPassword) {
+    throw new Error('Dana credentials are not configured.');
+  }
 
-  const rawMessage = [
-    `From: ${fromEmail}`,
-    `To: ${params.toEmail}`,
-    `Subject: ${subject}`,
-    'MIME-Version: 1.0',
-    `Content-Type: multipart/mixed; boundary="${boundary}"`,
-    '',
-    `--${boundary}`,
-    'Content-Type: text/plain; charset=UTF-8',
-    'Content-Transfer-Encoding: 7bit',
-    '',
-    textBody,
-    '',
-    `--${boundary}`,
-    'Content-Type: application/pdf; name="acuse-firmado.pdf"',
-    'Content-Description: acuse-firmado.pdf',
-    `Content-Disposition: attachment; filename="acuse-firmado.pdf"; size=${params.ackPdfBuffer.byteLength};`,
-    'Content-Transfer-Encoding: base64',
-    '',
-    attachmentBase64,
-    '',
-    `--${boundary}--`
-  ].join('\n');
+  return `Basic ${Buffer.from(`${danaUsername}:${danaPassword}`).toString('base64')}`;
+};
 
-  await sesClient.send(
-    new SendRawEmailCommand({
-      RawMessage: {
-        Data: Buffer.from(rawMessage)
-      }
-    })
-  );
+const fetchDanaCase = async (dana: string) => {
+  if (!danaBaseUrl) {
+    throw new Error('Dana base URL is not configured.');
+  }
+
+  const authorizationHeader = buildDanaAuthorizationHeader();
+  const response = await fetch(`${danaBaseUrl.replace(/\/$/, '')}/${encodeURIComponent(dana)}`, {
+    method: 'GET',
+    headers: {
+      Authorization: authorizationHeader,
+      accept: 'application/json',
+      'user-agent': 'SL-AcuseRecibo/1.0'
+    }
+  });
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Dana lookup failed with status ${response.status}.`);
+  }
+
+  let parsed: Record<string, unknown>;
+
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error('Dana lookup returned invalid JSON.');
+  }
+
+  return parsed;
+};
+
+const triggerDanaCase = async (dana: string, payload: Record<string, string>) => {
+  if (!danaTriggerUrl || !danaUsername || !danaPassword) {
+    return;
+  }
+
+  const authorizationHeader = buildDanaAuthorizationHeader();
+  const triggerUrl = new URL(danaTriggerUrl);
+  triggerUrl.searchParams.set('dana', dana);
+
+  Object.entries(payload).forEach(([key, value]) => {
+    if (!value) {
+      return;
+    }
+
+    triggerUrl.searchParams.set(key.toUpperCase(), value);
+  });
+
+  const response = await fetch(triggerUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: authorizationHeader,
+      accept: 'application/json',
+      'user-agent': 'SL-AcuseRecibo/1.0',
+      'content-length': '0'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Dana trigger failed with status ${response.status}.`);
+  }
 };
 
 const readSignedStatus = async (token: string) => {
-  const latestKey = `acks/${token}/latest.json`;
-
+  const latestKey = `acks/${sanitizeToken(token)}/latest.json`;
   const object = await s3Client.send(
     new GetObjectCommand({
       Bucket: bucketName,
@@ -228,15 +253,42 @@ export const handler = async (
   event: APIGatewayProxyEventV2
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   const method = event.requestContext.http.method;
-  const path = event.requestContext.http.path || event.rawPath;
 
   if (method === 'OPTIONS') {
     return emptyResponse(204);
   }
 
-  if (method === 'GET' && path.endsWith('/ack-status')) {
+  if (method === 'GET') {
     try {
+      const dana = event.queryStringParameters?.dana?.trim();
+      const selector = event.queryStringParameters?.s?.trim();
       const token = event.queryStringParameters?.token?.trim();
+
+      if (dana && (!selector || selector === 'n')) {
+        const danaData = await fetchDanaCase(dana);
+        const requestId =
+          typeof danaData.requestID === 'string' && danaData.requestID.trim()
+            ? danaData.requestID.trim()
+            : dana;
+
+        let signedStatus: SignedAckStatus | null = null;
+
+        try {
+          signedStatus = await readSignedStatus(requestId);
+        } catch {
+          signedStatus = null;
+        }
+
+        return jsonResponse(200, {
+          success: true,
+          data: {
+            dana,
+            ackId: requestId,
+            signedStatus,
+            record: typeof danaData.record === 'object' && danaData.record ? danaData.record : {}
+          }
+        });
+      }
 
       if (!token) {
         return jsonResponse(400, {
@@ -271,7 +323,8 @@ export const handler = async (
 
   try {
     const payload = JSON.parse(event.body ?? '{}') as SubmitSignedAckRequest;
-    const token = getRequiredString(payload, 'token');
+    const token = sanitizeToken(getRequiredString(payload, 'token'));
+    const danaReference = optionalString(payload, 'danaReference');
     const customerEmail = getRequiredString(payload, 'customerEmail');
     const customerName = getRequiredString(payload, 'customerName');
     const documentNumber = getRequiredString(payload, 'documentNumber');
@@ -338,14 +391,19 @@ export const handler = async (
       )
     ]);
 
-    await sendSignedAckEmail({
-      toEmail: customerEmail,
-      customerName,
-      documentNumber,
-      token,
-      signedAt,
-      ackPdfBuffer: pdfBuffer
-    });
+    if (danaReference) {
+      await triggerDanaCase(danaReference, {
+        customeremail: customerEmail,
+        customername: customerName,
+        documentnumber: documentNumber,
+        signedat: signedAt,
+        confirmationcode: confirmationCode,
+        ackurl: signedStatus.ackUrl,
+        signatureurl: signedStatus.signatureUrl,
+        invoiceurl: invoiceUrl,
+        status: signedStatus.status
+      });
+    }
 
     return jsonResponse(200, {
       success: true,

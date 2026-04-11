@@ -1,6 +1,7 @@
 import { initialConfirmationMock, pendingAckMock } from '../mocks/ackMock';
 import {
   AckConfirmationSummary,
+  DanaCaseResolution,
   PendingAck,
   SignedAckStatus,
   SignedPreviewPayload,
@@ -92,6 +93,7 @@ export const ackService = {
       },
       body: JSON.stringify({
         token: payload.ackId,
+        danaReference: payload.danaReference,
         customerEmail: payload.customerEmail,
         customerName: payload.customerName || payload.signerName.trim(),
         documentNumber: payload.documentNumber,
@@ -165,6 +167,50 @@ export const ackService = {
     };
 
     return result.data;
+  },
+
+  async resolveDanaCase(dana: string): Promise<DanaCaseResolution | null> {
+    if (!ACK_STATUS_URL || !dana.trim()) {
+      return null;
+    }
+
+    const response = await fetch(`${ACK_STATUS_URL}?dana=${encodeURIComponent(dana.trim())}&s=n`);
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    const result = (await response.json()) as {
+      success?: boolean;
+      message?: string;
+      data?: DanaCaseResolution;
+    };
+
+    if (!response.ok || !result.success || !result.data) {
+      throw new Error(result.message || 'No fue posible consultar el caso en DANA.');
+    }
+
+    if (result.data.signedStatus) {
+      latestConfirmation = {
+        ackId: result.data.signedStatus.ackId,
+        documentNumber: result.data.signedStatus.documentNumber,
+        signerName: result.data.signedStatus.signerName,
+        signedAt: result.data.signedStatus.signedAt,
+        confirmationCode: result.data.signedStatus.confirmationCode,
+        invoiceUrl: DEMO_INVOICE_URL || result.data.signedStatus.invoiceUrl,
+        status: result.data.signedStatus.status
+      };
+    }
+
+    return {
+      ...result.data,
+      signedStatus: result.data.signedStatus
+        ? {
+            ...result.data.signedStatus,
+            invoiceUrl: DEMO_INVOICE_URL || result.data.signedStatus.invoiceUrl
+          }
+        : null
+    };
   },
 
   getLastConfirmation(): AckConfirmationSummary | null {

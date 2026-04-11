@@ -11,12 +11,13 @@ function ConfirmationPage() {
   const [searchParams] = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const token = searchParams.get('token') || searchParams.get('dana');
+  const token = searchParams.get('token');
+  const dana = searchParams.get('dana');
   const confirmation = useMemo(() => ackService.getLastConfirmation(), []);
   const invoiceUrl = confirmation?.invoiceUrl ?? null;
 
   useEffect(() => {
-    if (confirmation || !token) {
+    if (confirmation || (!token && !dana)) {
       return;
     }
 
@@ -27,6 +28,20 @@ function ConfirmationPage() {
       setLoadError('');
 
       try {
+        if (dana) {
+          const result = await ackService.resolveDanaCase(dana);
+
+          if (!cancelled && !result?.signedStatus) {
+            setLoadError('No encontramos un acuse firmado para este enlace.');
+          }
+          return;
+        }
+
+        if (!token) {
+          setLoadError('No encontramos un identificador valido para este enlace.');
+          return;
+        }
+
         const result = await ackService.getSignedAckStatus(token);
 
         if (!cancelled && !result) {
@@ -48,7 +63,7 @@ function ConfirmationPage() {
     return () => {
       cancelled = true;
     };
-  }, [confirmation, token]);
+  }, [confirmation, dana, token]);
 
   return (
     <AppShell>

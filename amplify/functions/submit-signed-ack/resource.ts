@@ -1,7 +1,7 @@
 import { defineFunction } from '@aws-amplify/backend';
 
 const getRequiredEnv = () => {
-  const names = ['ACK_BUCKET_NAME', 'ACK_BUCKET_REGION', 'ALLOWED_ORIGIN', 'FROM_EMAIL', 'PORTAL_BASE_URL'] as const;
+  const names = ['ACK_BUCKET_NAME', 'ACK_BUCKET_REGION', 'ALLOWED_ORIGIN'] as const;
 
   return names.reduce<Record<(typeof names)[number], string>>((accumulator, name) => {
     const value = process.env[name];
@@ -21,5 +21,11 @@ export const submitSignedAck = defineFunction({
   runtime: 20,
   timeoutSeconds: 30,
   memoryMB: 512,
-  environment: getRequiredEnv()
+  environment: {
+    ...getRequiredEnv(),
+    DANA_BASE_URL: process.env.DANA_BASE_URL || '',
+    DANA_TRIGGER_URL: process.env.DANA_TRIGGER_URL || '',
+    DANA_USERNAME: process.env.DANA_USERNAME || '',
+    DANA_PASSWORD: process.env.DANA_PASSWORD || ''
+  }
 });

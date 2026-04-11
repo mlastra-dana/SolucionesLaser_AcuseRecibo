@@ -12,6 +12,7 @@ export interface PendingAck {
 
 export interface SignedAckPayload {
   ackId: string;
+  danaReference?: string;
   signerName: string;
   accepted: boolean;
   signatureDataUrl: string;
@@ -68,6 +69,13 @@ export interface SignedAckStatus {
   ackUrl: string;
   signatureUrl: string;
   status: 'Acuse firmado';
+}
+
+export interface DanaCaseResolution {
+  dana: string;
+  ackId: string;
+  signedStatus: SignedAckStatus | null;
+  record?: Record<string, unknown>;
 }
 
 export interface AckConfirmationSummary {

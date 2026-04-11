@@ -36,27 +36,45 @@ function AckProcessPage() {
   const isSigned = Boolean(signedAt && signatureCode);
   const canSubmit = Boolean(pendingAck && hasSignature && accepted && !isPreparingPreview && !isProcessing);
   const statusLabel = isSigned ? 'Documento firmado' : 'Pendiente de firma';
-  const inboundToken = searchParams.get('token') || searchParams.get('dana') || '';
+  const tokenParam = searchParams.get('token') || '';
+  const danaParam = searchParams.get('dana') || '';
+  const inboundToken = tokenParam || danaParam;
 
   useEffect(() => {
     let mounted = true;
     let initialBaseUrl: string | null = null;
 
     const load = async () => {
-      if (inboundToken) {
-        const signedStatus = await ackService.getSignedAckStatus(inboundToken);
+      let resolvedAckId = inboundToken;
+
+      if (danaParam) {
+        const danaCase = await ackService.resolveDanaCase(danaParam);
+
+        if (danaCase?.signedStatus) {
+          navigate(
+            `/confirmacion?token=${encodeURIComponent(danaCase.ackId)}&dana=${encodeURIComponent(danaParam)}`,
+            { replace: true }
+          );
+          return;
+        }
+
+        if (danaCase?.ackId) {
+          resolvedAckId = danaCase.ackId;
+        }
+      } else if (tokenParam) {
+        const signedStatus = await ackService.getSignedAckStatus(tokenParam);
 
         if (signedStatus) {
-          navigate(`/confirmacion?token=${encodeURIComponent(inboundToken)}`, { replace: true });
+          navigate(`/confirmacion?token=${encodeURIComponent(tokenParam)}`, { replace: true });
           return;
         }
       }
 
       const ack = await ackService.getPendingAck();
-      const resolvedAck = inboundToken
+      const resolvedAck = resolvedAckId
         ? {
             ...ack,
-            ackId: inboundToken
+            ackId: resolvedAckId
           }
         : ack;
       const basePdf = await createBaseAckPdf(resolvedAck);
@@ -82,7 +100,7 @@ function AckProcessPage() {
         URL.revokeObjectURL(initialBaseUrl);
       }
     };
-  }, [inboundToken, navigate, searchParams]);
+  }, [danaParam, inboundToken, navigate, searchParams, tokenParam]);
 
   const summary = useMemo(() => pendingAck ?? pendingAckMock, [pendingAck]);
 
@@ -149,6 +167,7 @@ function AckProcessPage() {
     try {
       await ackService.submitSignedAck({
         ackId: pendingAck.ackId,
+        danaReference: danaParam || undefined,
         signerName: pendingAck.signerName,
         accepted,
         signatureDataUrl,
@@ -160,7 +179,11 @@ function AckProcessPage() {
         documentNumber: pendingAck.documentNumber,
         invoiceUrl: pendingAck.invoiceUrl
       });
-      navigate(`/confirmacion?token=${encodeURIComponent(pendingAck.ackId)}`);
+      const nextParams = new URLSearchParams({ token: pendingAck.ackId });
+      if (danaParam) {
+        nextParams.set('dana', danaParam);
+      }
+      navigate(`/confirmacion?${nextParams.toString()}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No fue posible completar el tramite.';
       setSubmitError(message);

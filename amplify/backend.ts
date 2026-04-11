@@ -53,8 +53,8 @@ httpApi.addRoutes({
 
 backend.submitSignedAck.resources.lambda.addToRolePolicy(
   new PolicyStatement({
-    actions: ['s3:PutObject', 's3:GetObject'],
-    resources: [`arn:aws:s3:::${bucketName}/acks/*`]
+    actions: ['s3:PutObject', 's3:GetObject', 's3:ListBucket'],
+    resources: [`arn:aws:s3:::${bucketName}`, `arn:aws:s3:::${bucketName}/acks/*`]
   })
 );
 

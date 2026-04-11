@@ -94,7 +94,46 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && requestUrl.pathname === '/ack-status') {
+    if (
+      request.method === 'GET' &&
+      (requestUrl.pathname === '/ack-status' || requestUrl.pathname === '/submit-signed-ack')
+    ) {
+      const dana = requestUrl.searchParams.get('dana')?.trim();
+
+      if (dana) {
+        const stableAckId = `REQ-${dana.slice(0, 24).replace(/[^a-zA-Z0-9-_]/g, '_')}`;
+        const latestFile = path.join(storageRoot, stableAckId, 'latest.json');
+
+        try {
+          const latestContent = await readFile(latestFile, 'utf8');
+          sendJson(response, 200, {
+            success: true,
+            data: {
+              dana,
+              ackId: stableAckId,
+              signedStatus: JSON.parse(latestContent),
+              record: {
+                requestID: stableAckId
+              }
+            }
+          });
+        } catch {
+          sendJson(response, 200, {
+            success: true,
+            data: {
+              dana,
+              ackId: stableAckId,
+              signedStatus: null,
+              record: {
+                requestID: stableAckId
+              }
+            }
+          });
+        }
+
+        return;
+      }
+
       const token = requestUrl.searchParams.get('token')?.trim();
 
       if (!token) {
@@ -116,7 +155,6 @@ const server = createServer(async (request, response) => {
 
       return;
     }
-
     if (request.method === 'POST' && requestUrl.pathname === '/submit-signed-ack') {
       const rawBody = await readRequestBody(request);
       const payload = JSON.parse(rawBody || '{}');
@@ -134,6 +172,8 @@ const server = createServer(async (request, response) => {
           : null;
       const invoiceUrl =
         typeof payload.invoiceUrl === 'string' && payload.invoiceUrl.trim() ? payload.invoiceUrl.trim() : null;
+      const danaReference =
+        typeof payload.danaReference === 'string' && payload.danaReference.trim() ? payload.danaReference.trim() : '';
 
       if (!token || !signedAt || !signatureDataUrl || !signedPdfBase64 || !invoiceUrl) {
         sendJson(response, 400, {
@@ -190,6 +230,12 @@ const server = createServer(async (request, response) => {
       };
 
       await writeFile(path.join(tokenDir, 'latest.json'), JSON.stringify(signedStatus, null, 2));
+
+      if (danaReference) {
+        const stableAckId = `REQ-${danaReference.slice(0, 24).replace(/[^a-zA-Z0-9-_]/g, '_')}`;
+        await mkdir(path.join(storageRoot, stableAckId), { recursive: true });
+        await writeFile(path.join(storageRoot, stableAckId, 'latest.json'), JSON.stringify(signedStatus, null, 2));
+      }
 
       sendJson(response, 200, {
         success: true,
