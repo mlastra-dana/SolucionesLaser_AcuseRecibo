@@ -79,12 +79,23 @@ function AckProcessPage() {
           resolvedAckId = danaCase.ackId;
         }
 
-        resolvedSignerName = readRecordString(danaCase?.record, [
-          'NombreCliente',
-          'NOMBRECLIENTE',
-          'customerName',
-          'clientName'
-        ]);
+        resolvedSignerName =
+          readRecordString(danaCase?.record, [
+            'NombreCliente',
+            'NOMBRECLIENTE',
+            'nombrecliente',
+            'customerName',
+            'CUSTOMERNAME',
+            'clientName'
+          ]) ||
+          readRecordString(danaCase as unknown as Record<string, unknown>, [
+            'NombreCliente',
+            'NOMBRECLIENTE',
+            'nombrecliente',
+            'customerName',
+            'CUSTOMERNAME',
+            'clientName'
+          ]);
       } else if (tokenParam) {
         const signedStatus = await ackService.getSignedAckStatus(tokenParam);
 
@@ -99,11 +110,11 @@ function AckProcessPage() {
         ? {
             ...ack,
             ackId: resolvedAckId,
-            signerName: resolvedSignerName || ack.clientName
+            signerName: resolvedSignerName || ack.signerName || ack.clientName
           }
         : {
             ...ack,
-            signerName: resolvedSignerName || ack.clientName
+            signerName: resolvedSignerName || ack.signerName || ack.clientName
           };
       const basePdf = await createBaseAckPdf(resolvedAck);
       const url = toBlobUrl(basePdf);
@@ -208,7 +219,7 @@ function AckProcessPage() {
         confirmationCode: signatureCode,
         signedPdfBytes: pdfBytes ?? basePdfBytes ?? new Uint8Array(),
         customerEmail: pendingAck.email,
-        customerName: pendingAck.clientName,
+        customerName: pendingAck.signerName,
         documentNumber: pendingAck.documentNumber,
         invoiceUrl: pendingAck.invoiceUrl
       });
