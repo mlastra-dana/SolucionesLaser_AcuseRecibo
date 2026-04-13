@@ -117,7 +117,7 @@ function AckProcessPage() {
         clientName: pendingAck.clientName,
         documentNumber: pendingAck.documentNumber,
         issueDate: pendingAck.issueDate,
-        signerName: pendingAck.signerName,
+        signerName: pendingAck.clientName,
         signatureDataUrl: dataUrl,
         signedAt: formatDateTime(new Date())
       });
@@ -168,7 +168,7 @@ function AckProcessPage() {
       await ackService.submitSignedAck({
         ackId: pendingAck.ackId,
         danaReference: danaParam || undefined,
-        signerName: pendingAck.signerName,
+        signerName: pendingAck.clientName,
         accepted,
         signatureDataUrl,
         signedAt,

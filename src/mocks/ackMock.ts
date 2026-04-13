@@ -4,7 +4,7 @@ export const pendingAckMock: PendingAck = {
   ackId: 'ACK-DOC-2026-000184',
   // Demo note: these fields are intentionally aligned by hand with public/mock/factura-real.pdf
   clientName: 'Tu empresa',
-  signerName: 'María Fernanda Pérez',
+  signerName: 'Tu empresa',
   identification: 'J-00000000-0',
   email: 'tuempresa@gmail.com',
   documentNumber: '00000001',
