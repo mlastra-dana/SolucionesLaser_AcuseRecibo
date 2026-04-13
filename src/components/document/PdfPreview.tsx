@@ -5,9 +5,10 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', i
 
 type PdfPreviewProps = {
   pdfUrl: string | null;
+  isPreparing?: boolean;
 };
 
-function PdfPreview({ pdfUrl }: PdfPreviewProps) {
+function PdfPreview({ pdfUrl, isPreparing = false }: PdfPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -76,6 +77,7 @@ function PdfPreview({ pdfUrl }: PdfPreviewProps) {
   return (
     <div className="rounded-xl border border-brand-border bg-brand-surface p-4 shadow-soft sm:p-5">
       <div className="overflow-auto rounded-lg border border-brand-border bg-brand-background p-4">
+        {isPreparing ? <p className="mb-3 text-sm text-brand-muted">Preparando documento...</p> : null}
         {isLoading ? <p className="mb-3 text-sm text-brand-muted">Cargando documento PDF...</p> : null}
         {error ? <p className="mb-3 text-sm text-brand-orange">{error}</p> : null}
         <canvas ref={canvasRef} className="mx-auto h-auto max-w-full bg-white shadow-card" />

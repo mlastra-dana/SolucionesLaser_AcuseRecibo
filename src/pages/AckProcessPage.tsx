@@ -15,6 +15,21 @@ import { formatDateTime } from '../utils/format';
 const toBlobUrl = (bytes: Uint8Array) =>
   URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
 
+const readRecordString = (record: Record<string, unknown> | undefined, keys: string[]) => {
+  if (!record) {
+    return '';
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return '';
+};
+
 function AckProcessPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -31,6 +46,7 @@ function AckProcessPage() {
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [signatureError, setSignatureError] = useState('');
   const [submitError, setSubmitError] = useState('');
+  const [isPreparingDocument, setIsPreparingDocument] = useState(true);
 
   const hasSignature = Boolean(signatureDataUrl);
   const isSigned = Boolean(signedAt && signatureCode);
@@ -46,6 +62,7 @@ function AckProcessPage() {
 
     const load = async () => {
       let resolvedAckId = inboundToken;
+      let resolvedSignerName = '';
 
       if (danaParam) {
         const danaCase = await ackService.resolveDanaCase(danaParam);
@@ -61,6 +78,13 @@ function AckProcessPage() {
         if (danaCase?.ackId) {
           resolvedAckId = danaCase.ackId;
         }
+
+        resolvedSignerName = readRecordString(danaCase?.record, [
+          'NombreCliente',
+          'NOMBRECLIENTE',
+          'customerName',
+          'clientName'
+        ]);
       } else if (tokenParam) {
         const signedStatus = await ackService.getSignedAckStatus(tokenParam);
 
@@ -75,11 +99,11 @@ function AckProcessPage() {
         ? {
             ...ack,
             ackId: resolvedAckId,
-            signerName: ack.clientName
+            signerName: resolvedSignerName || ack.clientName
           }
         : {
             ...ack,
-            signerName: ack.clientName
+            signerName: resolvedSignerName || ack.clientName
           };
       const basePdf = await createBaseAckPdf(resolvedAck);
       const url = toBlobUrl(basePdf);
@@ -95,9 +119,14 @@ function AckProcessPage() {
       setBasePdfUrl(url);
       setPdfBytes(basePdf);
       setPdfUrl(url);
+      setIsPreparingDocument(false);
     };
 
-    void load();
+    void load().catch(() => {
+      if (mounted) {
+        setIsPreparingDocument(false);
+      }
+    });
     return () => {
       mounted = false;
       if (initialBaseUrl) {
@@ -121,7 +150,7 @@ function AckProcessPage() {
         clientName: pendingAck.clientName,
         documentNumber: pendingAck.documentNumber,
         issueDate: pendingAck.issueDate,
-        signerName: pendingAck.clientName,
+        signerName: pendingAck.signerName,
         signatureDataUrl: dataUrl,
         signedAt: formatDateTime(new Date())
       });
@@ -172,7 +201,7 @@ function AckProcessPage() {
       await ackService.submitSignedAck({
         ackId: pendingAck.ackId,
         danaReference: danaParam || undefined,
-        signerName: pendingAck.clientName,
+        signerName: pendingAck.signerName,
         accepted,
         signatureDataUrl,
         signedAt,
@@ -225,7 +254,7 @@ function AckProcessPage() {
         </Card>
 
         <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
-          <PdfPreview pdfUrl={pdfUrl} />
+          <PdfPreview pdfUrl={pdfUrl} isPreparing={isPreparingDocument} />
 
           <Card className="space-y-4">
             <h2 className="text-base font-semibold text-brand-ink">Firma del receptor</h2>
