@@ -15,58 +15,6 @@ import { formatDateTime } from '../utils/format';
 const toBlobUrl = (bytes: Uint8Array) =>
   URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
 
-const readRecordString = (record: Record<string, unknown> | undefined, keys: string[]) => {
-  if (!record) {
-    return '';
-  }
-
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
-    }
-  }
-
-  return '';
-};
-
-const mergePendingAckWithDanaRecord = (
-  ack: PendingAck,
-  record: Record<string, unknown> | undefined,
-  ackId: string
-): PendingAck => {
-  const clientName =
-    readRecordString(record, ['NombreCliente', 'NOMBRECLIENTE', 'customerName', 'clientName']) ||
-    ack.clientName;
-  const email =
-    readRecordString(record, ['Email', 'EMAIL', 'email']) ||
-    ack.email;
-  const documentNumber =
-    readRecordString(record, ['NumeroFactura', 'DOCUMENTNUMBER', 'Numero de factura', 'documentNumber']) ||
-    ack.documentNumber;
-  const invoiceUrl =
-    readRecordString(record, ['URL_Factura', 'URL Factura', 'invoiceUrl', 'InvoiceUrl']) ||
-    ack.invoiceUrl;
-  const identification =
-    readRecordString(record, ['RifCedula', 'RIF_CEDULA', 'identification', 'Identification']) ||
-    ack.identification;
-  const issueDate =
-    readRecordString(record, ['FechaEmision', 'FECHAEMISION', 'issueDate', 'IssueDate']) ||
-    ack.issueDate;
-
-  return {
-    ...ack,
-    ackId,
-    clientName,
-    signerName: clientName,
-    email,
-    documentNumber,
-    invoiceUrl,
-    identification,
-    issueDate
-  };
-};
-
 function AckProcessPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -98,7 +46,6 @@ function AckProcessPage() {
 
     const load = async () => {
       let resolvedAckId = inboundToken;
-      let danaRecord: Record<string, unknown> | undefined;
 
       if (danaParam) {
         const danaCase = await ackService.resolveDanaCase(danaParam);
@@ -114,8 +61,6 @@ function AckProcessPage() {
         if (danaCase?.ackId) {
           resolvedAckId = danaCase.ackId;
         }
-
-        danaRecord = danaCase?.record;
       } else if (tokenParam) {
         const signedStatus = await ackService.getSignedAckStatus(tokenParam);
 
@@ -127,8 +72,15 @@ function AckProcessPage() {
 
       const ack = await ackService.getPendingAck();
       const resolvedAck = resolvedAckId
-        ? mergePendingAckWithDanaRecord(ack, danaRecord, resolvedAckId)
-        : ack;
+        ? {
+            ...ack,
+            ackId: resolvedAckId,
+            signerName: ack.clientName
+          }
+        : {
+            ...ack,
+            signerName: ack.clientName
+          };
       const basePdf = await createBaseAckPdf(resolvedAck);
       const url = toBlobUrl(basePdf);
 
