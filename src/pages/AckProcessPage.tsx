@@ -144,7 +144,7 @@ function AckProcessPage() {
         URL.revokeObjectURL(initialBaseUrl);
       }
     };
-  }, [danaParam, inboundToken, navigate, searchParams, tokenParam]);
+  }, [danaParam, inboundToken, navigate, tokenParam]);
 
   const summary = useMemo(() => pendingAck ?? pendingAckMock, [pendingAck]);
 
