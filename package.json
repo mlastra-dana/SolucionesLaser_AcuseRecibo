@@ -7,9 +7,11 @@
     "dev": "vite",
     "dev:push": "vite --mode push",
     "server": "node server/dev-submit-signed-ack.mjs",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/build.mjs",
+    "build:portal": "tsc -b && vite build",
     "build:push": "tsc -b && vite build --mode push",
-    "test:push": "node --test tests/push-services.test.mjs",
+    "test:push": "node --test tests/push-services.test.mjs tests/pwa-assets.test.mjs",
+    "icons:pwa": "node scripts/generate-pwa-icons.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,7 +21,10 @@
     "pdfjs-dist": "^5.5.207",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.30.1"
+    "react-router-dom": "^6.30.1",
+    "workbox-core": "^7.4.1",
+    "workbox-precaching": "^7.4.1",
+    "workbox-routing": "^7.4.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -28,6 +33,7 @@
     "autoprefixer": "^10.4.20",
     "esbuild": "^0.28.2",
     "postcss": "^8.4.47",
+    "sharp": "^0.35.5",
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.3",
     "vite": "^5.4.10"

@@ -2,6 +2,20 @@ import { initializeApp } from 'firebase/app';
 import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
 import { getFirebaseConfig } from './firebaseConfig';
 import { recordPushEvent } from './eventStore';
+import { setCacheNameDetails } from 'workbox-core';
+import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
+import { NavigationRoute, registerRoute } from 'workbox-routing';
+
+// Vite injects only the app shell and public icons. No Firebase requests, tokens or visitor data are cached.
+const precache = __DANA_PRECACHE__;
+if (precache.length) {
+  setCacheNameDetails({ prefix: 'dana-push' });
+  precacheAndRoute(precache);
+  cleanupOutdatedCaches();
+  registerRoute(new NavigationRoute(createHandlerBoundToURL('/index.html'), {
+    allowlist: [/^\/(?:\?.*)?$/]
+  }));
+}
 
 // Activate the newly compiled Firebase configuration instead of retaining a worker from the previous deployment.
 self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
@@ -33,8 +47,12 @@ self.addEventListener('notificationclick', event => {
     await track('PUSH_CLICKED', payload);
     const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const target = notificationUrl(payload);
-    const client = clients.find(item => item.url === target);
-    const opened = client ? await client.focus() : await self.clients.openWindow(target);
+    const client = clients.find(item => new URL(item.url).origin === new URL(target).origin);
+    let opened;
+    if (client) {
+      if (client.url !== target && client.navigate) await client.navigate(target);
+      opened = await client.focus();
+    } else opened = await self.clients.openWindow(target);
     if (opened) await track('PUSH_OPENED', payload);
   })());
 });
@@ -48,7 +66,8 @@ if (config.apiKey && config.projectId === 'dana-push-demo-vzla' && config.appId 
     if (!payload.notification) {
       await self.registration.showNotification(payload.data?.title || 'DANAconnect', {
         body: payload.data?.body || 'Has recibido una nueva notificación.',
-        icon: payload.data?.icon || '/push-notification.png',
+        icon: payload.data?.icon || '/pwa/icon-192.png',
+        ...(payload.data?.image ? { image: payload.data.image } : {}),
         tag: payload.messageId,
         data: { danaPayload: payload }
       });

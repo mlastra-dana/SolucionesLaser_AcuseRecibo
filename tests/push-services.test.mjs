@@ -16,7 +16,7 @@ const config = {
 async function fixture(worker = false, overrides = {}) {
   const h = {
     supported: true, requested: 0, permissionResult: 'granted', token: 'test-fcm-token',
-    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0,
+    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false,
     async record(type, context, payload) { h.events.push({ type, context, payload }); }
   };
   const modules = {
@@ -26,17 +26,21 @@ async function fixture(worker = false, overrides = {}) {
       export const onMessage = (_app, fn) => { h.foreground = fn; return () => h.unsubscribeCount++; };
       export const getToken = async (_app, options) => { h.options = options; if (h.tokenError) throw h.tokenError; return h.token; };`,
     'firebase/messaging/sw': 'export const getMessaging = app => app; export const onBackgroundMessage = (_app, fn) => { h.background = fn; };',
-    'event-store': 'export const recordPushEvent = (...args) => h.record(...args);'
+    'event-store': 'export const recordPushEvent = (...args) => h.record(...args);',
+    'workbox-core': 'export const setCacheNameDetails = () => {};',
+    'workbox-precaching': 'export const precacheAndRoute = entries => { h.precache = entries; }; export const cleanupOutdatedCaches = () => {}; export const createHandlerBoundToURL = url => url;',
+    'workbox-routing': 'export class NavigationRoute { constructor(handler, options) { this.handler = handler; this.options = options; } } export const registerRoute = route => { h.navigationRoute = route; };'
   };
   const result = await build({
     stdin: {
-      contents: worker ? "import './src/push/firebase-messaging-sw.js'" : "import * as api from './src/services/pushService'; import * as dana from './src/services/danaService'; globalThis.api = api; globalThis.dana = dana;",
+      contents: worker ? "import './src/push/firebase-messaging-sw.js'" : "import * as api from './src/services/pushService'; import * as dana from './src/services/danaService'; import * as support from './src/services/pushCapabilities'; import * as sharedWorker from './src/services/serviceWorkerService'; globalThis.api = api; globalThis.dana = dana; globalThis.support = support; globalThis.sharedWorker = sharedWorker;",
       resolveDir: process.cwd(), loader: 'ts'
     },
     bundle: true, write: false, format: 'iife', platform: 'browser',
-    define: { 'import.meta.env': JSON.stringify({ ...config, ...overrides }) },
+    define: { 'import.meta.env': JSON.stringify({ ...config, ...overrides }), __DANA_PRECACHE__: '[]' },
     plugins: [{ name: 'explicit-test-doubles', setup(builder) {
       builder.onResolve({ filter: /^firebase\// }, args => ({ path: args.path, namespace: 'test-double' }));
+      builder.onResolve({ filter: /^workbox-/ }, args => ({ path: args.path, namespace: 'test-double' }));
       builder.onResolve({ filter: /eventStore$/ }, () => ({ path: 'event-store', namespace: 'test-double' }));
       builder.onLoad({ filter: /.*/, namespace: 'test-double' }, args => ({ contents: modules[args.path], loader: 'js' }));
     } }]
@@ -45,8 +49,8 @@ async function fixture(worker = false, overrides = {}) {
   const context = vm.createContext({
     h, console, setTimeout, clearTimeout, URL,
     Notification: notification,
-    window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout },
-    navigator: { serviceWorker: { getRegistration: async () => h.workerRegistration, register: async (url, options) => { h.registration = { url, options }; return { active: {} }; } } },
+    window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout, matchMedia: () => ({ matches: h.standalone }) },
+    navigator: { userAgent: 'Chrome', platform: 'MacIntel', maxTouchPoints: 0, serviceWorker: { getRegistration: async () => h.workerRegistration, register: async (url, options) => { h.registrationCount++; h.registration = { url, options }; return { active: {} }; } } },
     self: {
       skipWaiting: async () => { h.skippedWaiting = true; },
       location: { origin: 'https://demo.example' },
@@ -257,4 +261,66 @@ test('cancelled page effects cannot overwrite the active foreground listener', a
   assert.equal(await context.api.listenForPushMessages(() => {}, () => false), null);
   assert.equal(h.foreground, undefined);
   assert.equal(h.initializationCount, 0);
+});
+
+test('PWA installation and FCM share one registration without requesting permission on load', async () => {
+  const { h, context } = await fixture();
+  const [pwaWorker, parallelWorker] = await Promise.all([
+    context.sharedWorker.registerSharedWorker(), context.sharedWorker.registerSharedWorker()
+  ]);
+  assert.equal(pwaWorker, parallelWorker);
+  assert.equal(h.registrationCount, 1);
+  assert.equal(h.requested, 0);
+  assert.equal(h.options, undefined);
+  await context.api.registerPushBrowser(() => {});
+  assert.equal(h.registrationCount, 1);
+  assert.equal(h.options.serviceWorkerRegistration, pwaWorker);
+});
+
+test('iPhone needs Home Screen mode before Push capabilities can be checked', async () => {
+  const { h, context } = await fixture();
+  context.navigator.userAgent = 'iPhone';
+  let capabilities = await context.support.getPushCapabilities();
+  assert.equal(capabilities.reason, 'install-required');
+  assert.equal(capabilities.supported, false);
+  h.standalone = true;
+  capabilities = await context.support.getPushCapabilities();
+  assert.equal(capabilities.supported, true);
+  h.supported = false;
+  capabilities = await context.support.getPushCapabilities();
+  assert.equal(capabilities.reason, 'firebase');
+  assert.match(context.support.pushUnavailableMessage(capabilities.reason), /se instaló correctamente.*no está disponible/);
+  assert.equal(h.requested, 0);
+});
+
+test('Push permission stays inside the user action when capabilities were preflighted', async () => {
+  const { h, context } = await fixture();
+  const capabilities = await context.support.getPushCapabilities();
+  const registration = context.api.registerPushBrowser(() => {}, capabilities);
+  assert.equal(h.requested, 1);
+  await registration;
+});
+
+test('notification click reuses an app window with a different query instead of creating a duplicate', async () => {
+  const { h } = await fixture(true);
+  let focused = false, navigated;
+  h.clients = [{ url: 'https://demo.example/?previous=true', postMessage() {}, async navigate(url) { navigated = url; return this; }, async focus() { focused = true; return this; } }];
+  let completed;
+  h.listeners.notificationclick({
+    notification: { data: { FCM_MSG: { fcmMessageId: 'reuse-window', data: { url: 'https://demo.example/?push=true' } } }, close() {} },
+    stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; }
+  });
+  await completed;
+  assert.equal(navigated, 'https://demo.example/?push=true');
+  assert.ok(focused);
+  assert.equal(h.openedUrl, undefined);
+});
+
+test('data-only notifications include optional image without generating extra receipts or displays', async () => {
+  const { h } = await fixture(true);
+  await h.background({ messageId: 'image-message', data: { title: 'Fixture', image: 'https://demo.example/image.png' } });
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.notices[0][1].image, 'https://demo.example/image.png');
+  assert.equal(h.notices[0][1].icon, '/pwa/icon-192.png');
+  assert.equal(h.events.length, 1);
 });

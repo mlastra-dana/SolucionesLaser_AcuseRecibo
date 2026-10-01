@@ -12,7 +12,7 @@ npm run test:push
 npm run preview -- --host 127.0.0.1 --port 4174
 ```
 
-`npm run build` y `npm run dev` siguen seleccionando el portal original. Para esta demo se debe usar el modo `push`. No hay autenticación, Firebase Hosting, Firebase Admin SDK ni credenciales privadas.
+`npm run build` selecciona la demo en la rama `dana-push-experience` (o con `AWS_BRANCH` igual a esa rama); en otras ramas selecciona el portal. `npm run build:portal` y `npm run build:push` permiten elegir explícitamente. `npm run dev` conserva el portal y `npm run dev:push` abre la demo. No hay autenticación, Firebase Hosting, Firebase Admin SDK ni credenciales privadas. La conversión PWA y su validación se documentan en [DANA_PUSH_PWA.md](DANA_PUSH_PWA.md).
 
 ## Variables públicas
 
@@ -41,7 +41,7 @@ Se valida la configuración antes de pedir permiso. Nombre y apellido son obliga
 4. Ejecuta `npm ci` y `npm run build:push`; publica `dist`.
 5. Verifica HTTPS y que `/firebase-messaging-sw.js` devuelve JavaScript, no HTML. La compilación genera ese archivo en la raíz de `dist` y empaqueta Firebase modular junto a su configuración pública. No usa `import.meta.env` en `public/`.
 6. Esta demo usa una sola ruta `/` y no necesita un rewrite SPA general. Si existe uno en la configuración actual, excluye los archivos estáticos, especialmente el Service Worker. Puedes usar un rewrite 200 de rutas sin extensión a `/index.html`: `</^[^.]+$|\\.(?!(css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|mjs)$)([^.]+$)/>`.
-7. Opcional: cabecera `Cache-Control: no-cache` para `/firebase-messaging-sw.js`. El registro usa `updateViaCache: none`; no hay caché offline de páginas.
+7. Recomendada: cabecera `Cache-Control: no-cache` para `/firebase-messaging-sw.js`, `/index.html` y `/manifest.webmanifest`. El registro usa `updateViaCache: none`. El mismo worker incorpora una caché Workbox versionada de la interfaz y los iconos; no almacena peticiones FCM ni datos del formulario. Consulta la guía PWA antes del siguiente despliegue.
 
 Si la API key pública tiene restricciones de origen, habilita el nuevo origen HTTPS en la configuración correspondiente del proyecto existente. Un origen o perfil nuevo necesita registrar su propio navegador y obtener su token. No reutilizar el token de localhost para otro dominio.
 

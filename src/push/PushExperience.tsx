@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowRight, Bell, BellRing, Check, CheckCircle2, ChevronDown, Clipboard, Code2, Info, LoaderCircle, LockKeyhole, RefreshCw, Send, ShieldCheck, Trash2, UserRound, X } from 'lucide-react';
+import { ArrowRight, Bell, BellRing, Check, CheckCircle2, ChevronDown, Clipboard, Code2, Info, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Trash2, UserRound, X } from 'lucide-react';
 import type { MessagePayload } from 'firebase/messaging';
 import { getPushDiagnostics, listenForPushMessages, registerPushBrowser, type PushDiagnostics } from '../services/pushService';
 import { registerPushVisitor, type PushVisitor } from '../services/danaService';
-import { clearPushEvents, getMessageDetails, readPushEvents, recordPushEvent, type PushEvent } from './eventStore';
+import { clearPushEvents, getMessageDetails, readPushEvents, recordPushEvent, type ObservedNotification, type PushEvent } from './eventStore';
 import { getFirebaseConfig } from './firebaseConfig';
+import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } from '../services/pushCapabilities';
+import { usePwa } from './usePwa';
+import InstallExperience from './InstallExperience';
+import NotificationsHistory from './NotificationsHistory';
 
 const demoMode = import.meta.env.VITE_PUSH_DEMO_MODE !== 'false';
 
 export default function PushExperience() {
+  const pwa = usePwa();
+  const [capabilities, setCapabilities] = useState<PushCapabilities | null>(null);
   const [nombre, setNombre] = useState('');
   const [apellido, setApellido] = useState('');
   const [consent, setConsent] = useState(false);
@@ -23,6 +29,7 @@ export default function PushExperience() {
   const [copied, setCopied] = useState(false);
   const [copyError, setCopyError] = useState('');
   const [revealed, setRevealed] = useState(false);
+  const [messageContext, setMessageContext] = useState<'foreground' | 'background'>('foreground');
   const stop = useRef<(() => void) | null>(null);
   const listenerGeneration = useRef(0);
   const mounted = useRef(true);
@@ -30,15 +37,32 @@ export default function PushExperience() {
   const nameInput = useRef<HTMLInputElement>(null);
   const successTitle = useRef<HTMLHeadingElement>(null);
   const copyTimer = useRef<number>();
+  const restoredClick = useRef<string | null>(null);
 
   async function refreshEvents() {
-    try { setEvents(await readPushEvents()); setHistoryError(''); }
+    try {
+      const stored = await readPushEvents();
+      setEvents(stored);
+      setHistoryError('');
+      const clicked = stored.find(item => item.type === 'PUSH_CLICKED' && item.context === 'background');
+      if (clicked && restoredClick.current !== clicked.id) {
+        restoredClick.current = clicked.id;
+        setLatest(clicked.payload as unknown as MessagePayload);
+        setLatestTimestamp(clicked.timestamp);
+        setMessageContext('background');
+        setRevealed(true);
+      }
+    }
     catch { setHistoryError('El historial local no está disponible en este navegador. La recepción Push puede continuar.'); }
   }
 
   async function refreshDiagnostics() {
     try { setDiagnostics(await getPushDiagnostics()); }
     catch { setDiagnostics(null); }
+  }
+
+  async function refreshCapabilities() {
+    setCapabilities(await getPushCapabilities());
   }
 
   const receivePayload = useCallback((payload: MessagePayload) => {
@@ -50,6 +74,7 @@ export default function PushExperience() {
     }
     setLatest(payload);
     setLatestTimestamp(new Date().toISOString());
+    setMessageContext('foreground');
     setRevealed(false);
     void refreshEvents();
   }, []);
@@ -58,6 +83,7 @@ export default function PushExperience() {
     mounted.current = true;
     void refreshEvents();
     void refreshDiagnostics();
+    void refreshCapabilities();
     let cancelled = false;
     const generation = listenerGeneration.current;
     void listenForPushMessages(receivePayload, () => !cancelled && generation === listenerGeneration.current).then(unsubscribe => {
@@ -67,7 +93,7 @@ export default function PushExperience() {
     const received = (event: MessageEvent) => {
       if (event.data?.source === 'DANA_PUSH_WORKER') void refreshEvents();
     };
-    const visible = () => { if (document.visibilityState === 'visible') { void refreshEvents(); void refreshDiagnostics(); } };
+    const visible = () => { if (document.visibilityState === 'visible') { void refreshEvents(); void refreshDiagnostics(); void refreshCapabilities(); } };
     navigator.serviceWorker?.addEventListener('message', received);
     document.addEventListener('visibilitychange', visible);
     return () => {
@@ -88,12 +114,13 @@ export default function PushExperience() {
     setError('');
     if (!nombre.trim() || !apellido.trim()) { setError('Introduce tu nombre y apellido para continuar.'); return; }
     if (!consent) { setError('Acepta recibir una notificación de prueba para continuar.'); return; }
+    if (!pwa.online) { setError('Conéctate a Internet para registrar el navegador y generar tu token.'); return; }
     setBusy(true);
     try {
       listenerGeneration.current++;
       stop.current?.();
       stop.current = null;
-      const result = await registerPushBrowser(receivePayload);
+      const result = await registerPushBrowser(receivePayload, capabilities ?? undefined);
       if (!mounted.current) { result.unsubscribe(); return; }
       stop.current = result.unsubscribe;
       const registered = { nombre: nombre.trim(), apellido: apellido.trim(), token: result.token };
@@ -130,10 +157,28 @@ export default function PushExperience() {
     setRevealed(true);
     try {
       const payload = latest as unknown as Record<string, unknown>;
-      await recordPushEvent('PUSH_CLICKED', 'foreground', payload);
+      if (messageContext === 'foreground') await recordPushEvent('PUSH_CLICKED', 'foreground', payload);
       await recordPushEvent('PUSH_OPENED', 'foreground', payload);
       await refreshEvents();
     } catch { setHistoryError('El mensaje se abrió, pero no pudimos guardar el evento local.'); }
+  }
+
+  async function openHistoryMessage(message: ObservedNotification) {
+    setLatest(message.payload as unknown as MessagePayload);
+    setLatestTimestamp(message.timestamp);
+    setMessageContext(message.context);
+    setRevealed(true);
+    try {
+      await recordPushEvent('PUSH_OPENED', 'foreground', message.payload);
+      await refreshEvents();
+    } catch { setHistoryError('El mensaje se abrió, pero no pudimos guardar el evento local.'); }
+  }
+
+  function clearHistory() {
+    void clearPushEvents().then(() => {
+      setLatest(null);
+      return refreshEvents();
+    }).catch(() => setHistoryError('No pudimos borrar el historial local.'));
   }
 
   const firebaseConfig = getFirebaseConfig();
@@ -144,7 +189,7 @@ export default function PushExperience() {
   return (
     <div className="push-app">
       <header className="push-header">
-        <a className="brand" href="/" aria-label="DANAconnect Push Experience"><strong>DANA<span>connect</span></strong><span className="brand-divider" /><span className="experience-label">Push Experience</span></a>
+        <a className="brand" href="/" aria-label="DANAconnect Push Experience"><img src="/brand/logo-danaconnect-horizontal.png" width="1024" height="417" alt="DANAconnect" /></a>
         <span className="demo-badge"><span /> DEMO INTERACTIVA</span>
       </header>
 
@@ -157,6 +202,9 @@ export default function PushExperience() {
             <p className="intro-description">Descubre cómo DANAconnect permite conectar con tus clientes mediante notificaciones instantáneas, directamente en sus dispositivos.</p>
           </div>
 
+          <InstallExperience pwa={pwa} />
+          {capabilities && !capabilities.supported && <p className="push-compatibility-note" role="status"><Info size={16} />{pushUnavailableMessage(capabilities.reason)}</p>}
+
           <div className="registration-panel">
             {!visitor ? (
               <form onSubmit={submit} noValidate aria-busy={busy}>
@@ -168,7 +216,7 @@ export default function PushExperience() {
                   </div>
                   <label className="consent" htmlFor="consent"><input id="consent" type="checkbox" required checked={consent} onChange={event => setConsent(event.target.checked)} /><span>Acepto recibir una notificación de prueba en este navegador</span></label>
                   {error && <div className="error-message" role="alert"><Info size={18} /><span>{error}</span></div>}
-                  <button className="primary-button" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" size={19} /> : <Bell size={19} />}<span>{busy ? 'Preparando tu navegador…' : 'Registrarme y recibir mi Push'}</span>{!busy && <ArrowRight size={19} />}</button>
+                  <button className="primary-button" type="submit" disabled={busy || !capabilities}>{busy ? <LoaderCircle className="spin" size={19} /> : <Bell size={19} />}<span>{busy ? 'Preparando tu navegador…' : 'Registrarme y recibir mi Push'}</span>{!busy && <ArrowRight size={19} />}</button>
                 </fieldset>
                 <p className="privacy-note"><LockKeyhole size={13} /> Tus datos se usan únicamente para esta demostración.</p>
                 <p className="phase-note"><Info size={14} /><span>Validación Firebase. El envío automático desde DANA estará disponible en la siguiente fase.</span></p>
@@ -187,7 +235,9 @@ export default function PushExperience() {
           </div>
           <div className="trust-line"><ShieldCheck size={16} /><span>Con tu permiso.</span><span className="trust-divider" /> Sin contraseñas.<span className="trust-divider" /> Directo a tu navegador.</div>
 
-          {latest && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>NOTIFICACIÓN RECIBIDA · PRIMER PLANO</small><h3>¡Has recibido una notificación!</h3><h4>{latest.notification?.title || latest.data?.title || 'Sin título'}</h4><p>{latest.notification?.body || latest.data?.body || 'Sin cuerpo de mensaje'}</p>{revealed && <><p>Message ID: {latest.messageId || 'No disponible'}</p><p>{latestTimestamp}</p><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
+          {latest && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latest.notification?.title || latest.data?.title || 'Sin título'}</h4><p>{latest.notification?.body || latest.data?.body || 'Sin cuerpo de mensaje'}</p>{revealed && <><p>Message ID: {latest.messageId || 'No disponible'}</p><p>{latestTimestamp}</p><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
+
+          {demoMode && <NotificationsHistory events={events} onOpen={message => void openHistoryMessage(message)} onRefresh={() => void refreshEvents()} onClear={clearHistory} />}
 
           {demoMode && <details className="diagnostics">
             <summary><Code2 size={16} /><span>Información de diagnóstico</span><span className="diagnostic-state">{visitor ? 'Token disponible' : 'Sin registrar'}</span><ChevronDown size={15} /></summary>
@@ -199,6 +249,9 @@ export default function PushExperience() {
                 <dt>Estado del Service Worker</dt><dd>{diagnostics?.workerState || 'No disponible'}</dd>
                 <dt>Ruta del Service Worker</dt><dd>{diagnostics?.workerScript || 'Sin registrar'}</dd>
                 <dt>Alcance</dt><dd>{diagnostics?.workerScope || 'Sin registrar'}</dd>
+                <dt>Modo de aplicación</dt><dd>{pwa.installed ? 'Instalada / standalone' : 'Navegador'}</dd>
+                <dt>Notifications / Push API</dt><dd>{capabilities ? `${capabilities.notifications ? 'Disponible' : 'No disponible'} / ${capabilities.pushApi ? 'Disponible' : 'No disponible'}` : 'Comprobando'}</dd>
+                <dt>Soporte Firebase Messaging</dt><dd>{capabilities ? (capabilities.firebase ? 'Disponible' : 'No disponible') : 'Comprobando'}</dd>
               </dl>
               <p><strong>Token FCM:</strong> {visitor ? 'Generado por Firebase para este navegador y origen.' : 'Pendiente de registro.'}</p>
               {visitor && <><label className="token-label" htmlFor="token">Token del navegador</label><textarea id="token" readOnly value={visitor.token} rows={3} spellCheck={false} /><div className="diagnostic-actions"><button className="secondary-button" onClick={() => void copyToken()}>{copied ? <Check size={15} /> : <Clipboard size={15} />}{copied ? 'Token copiado' : 'Copiar token'}</button><button className="icon-button" title="Reiniciar formulario" aria-label="Reiniciar formulario" onClick={reset}><RefreshCw size={16} /></button></div>{copyError && <p role="alert">{copyError}</p>}</>}
@@ -214,7 +267,6 @@ export default function PushExperience() {
           </details>}
         </section>
 
-        <section className="how-section" aria-labelledby="how-title"><div className="how-inner"><p className="eyebrow">ASÍ DE SIMPLE</p><h2 id="how-title">Una conexión en tres pasos</h2><div className="steps">{[{ icon: UserRound, title: 'Regístrate', text: 'Tu nombre y apellido. El primer paso para una experiencia personalizada.' }, { icon: ShieldCheck, title: 'Autoriza las notificaciones', text: 'Tú decides. Permite las notificaciones de este sitio en tu navegador.' }, { icon: Send, title: 'Recibe tu experiencia Push', text: 'Tu navegador queda listo para la prueba manual desde DANAconnect.' }].map((step, index) => <div className="step" key={step.title}><div className="step-icon"><step.icon size={22} strokeWidth={1.7} /><span>{index + 1}</span></div><h3>{step.title}</h3><p>{step.text}</p></div>)}</div></div></section>
       </main>
       <footer className="push-footer"><span><strong>DANAconnect</strong> · Conectamos experiencias.</span><span>Push Experience <span className="footer-dot">·</span> Demo interactiva</span></footer>
     </div>

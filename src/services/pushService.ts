@@ -2,6 +2,8 @@ import { getApps, initializeApp } from 'firebase/app';
 import { getMessaging, getToken, isSupported, onMessage, type MessagePayload } from 'firebase/messaging';
 import { validateFirebaseConfig } from '../push/firebaseConfig';
 import { recordPushEvent } from '../push/eventStore';
+import { registerSharedWorker } from './serviceWorkerService';
+import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } from './pushCapabilities';
 
 function getPushMessaging() {
   const config = validateFirebaseConfig();
@@ -43,13 +45,10 @@ export async function getPushDiagnostics() {
 }
 export type PushDiagnostics = Awaited<ReturnType<typeof getPushDiagnostics>>;
 
-export async function registerPushBrowser(onPayload: (payload: MessagePayload) => void) {
-  if (!window.isSecureContext) throw new Error('Las notificaciones requieren HTTPS o localhost. Abre el enlace seguro de la demo.');
-  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
-    throw new Error('Este navegador no admite notificaciones Push. Prueba con Chrome actualizado.');
-  }
+export async function registerPushBrowser(onPayload: (payload: MessagePayload) => void, knownCapabilities?: PushCapabilities) {
+  const capabilities = knownCapabilities ?? await getPushCapabilities();
+  if (!capabilities.supported) throw new Error(pushUnavailableMessage(capabilities.reason));
   validateFirebaseConfig();
-  if (!(await isSupported())) throw new Error('Firebase Messaging no está disponible en este navegador. Prueba con Chrome fuera del modo privado.');
   if (Notification.permission === 'denied') throw new Error('Las notificaciones están bloqueadas. En Chrome, abre los controles del sitio junto a la dirección, permite las notificaciones y recarga la página.');
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
@@ -57,8 +56,7 @@ export async function registerPushBrowser(onPayload: (payload: MessagePayload) =
       ? 'Rechazaste las notificaciones. Para continuar, permite las notificaciones en la configuración de este sitio y vuelve a intentarlo.'
       : 'No concediste el permiso. Vuelve a intentarlo y selecciona Permitir para preparar tu navegador.');
   }
-  const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/', updateViaCache: 'none' });
-  await waitForActivation(registration);
+  const registration = await registerSharedWorker();
   const messaging = getPushMessaging();
   const unsubscribe = subscribe(onPayload);
   try {
@@ -74,24 +72,4 @@ export async function registerPushBrowser(onPayload: (payload: MessagePayload) =
     if (code) throw new Error(`No pudimos registrar el navegador en Firebase (${code}). Revisa la clave VAPID, la configuración del proyecto y la conexión.`);
     throw error;
   }
-}
-
-function waitForActivation(registration: ServiceWorkerRegistration): Promise<void> {
-  if (registration.active && !registration.installing && !registration.waiting) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const worker = registration.installing ?? registration.waiting;
-    if (!worker) { reject(new Error('No se pudo iniciar el Service Worker de notificaciones.')); return; }
-    const timeout = window.setTimeout(() => finish(new Error('El Service Worker tardó demasiado en activarse. Recarga e inténtalo de nuevo.')), 15000);
-    const changed = () => {
-      if (worker.state === 'activated') finish();
-      if (worker.state === 'redundant') finish(new Error('El Service Worker no pudo activarse.'));
-    };
-    const finish = (error?: Error) => {
-      clearTimeout(timeout);
-      worker.removeEventListener('statechange', changed);
-      if (error) reject(error); else resolve();
-    };
-    worker.addEventListener('statechange', changed);
-    changed();
-  });
 }

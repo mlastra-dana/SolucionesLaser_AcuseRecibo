@@ -18,6 +18,29 @@ export function getMessageDetails(payload: Record<string, unknown>) {
   return { title: typeof title === 'string' ? title : undefined, body: typeof body === 'string' ? body : undefined };
 }
 
+export type ObservedNotification = {
+  id: string; messageId?: string; title?: string; body?: string;
+  timestamp: string; opened: boolean; received: boolean;
+  context: PushEvent['context']; payload: Record<string, unknown>;
+};
+
+export function getNotificationHistory(events: PushEvent[]): ObservedNotification[] {
+  const messages = new Map<string, ObservedNotification>();
+  for (const event of [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp))) {
+    const id = event.messageId || event.id;
+    const previous = messages.get(id);
+    const details = getMessageDetails(event.payload);
+    messages.set(id, {
+      id, messageId: event.messageId, ...details,
+      timestamp: previous?.timestamp ?? event.timestamp,
+      received: Boolean(previous?.received || event.type === 'PUSH_RECEIVED'),
+      opened: Boolean(previous?.opened || event.type === 'PUSH_OPENED'),
+      context: event.context, payload: event.payload
+    });
+  }
+  return [...messages.values()].sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+}
+
 // Only diagnostic events are kept locally, capped at 50. Visitor names and tokens are not stored here.
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
