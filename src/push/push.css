@@ -64,6 +64,10 @@ summary::-webkit-details-marker { display: none; }
 .diagnostics[open] > summary > svg:last-child { transform: rotate(180deg); }
 .diagnostic-content { padding: 14px 0 4px; line-height: 1.6; }
 .diagnostic-content p { margin: 0 0 12px; }
+.diagnostic-content > h3 { font-size: 12px; font-weight: 600; color: #1f2937; margin: 16px 0 10px; }
+.diagnostic-values { display: grid; grid-template-columns: 155px minmax(0, 1fr); gap: 8px 12px; margin: 0 0 16px; }
+.diagnostic-values dt { font-weight: 600; }
+.diagnostic-values dd { margin: 0; overflow-wrap: anywhere; }
 .diagnostic-content textarea { width: 100%; font-family: monospace; font-size: 11px; padding: 10px; border: 1px solid #dce1e7; border-radius: 4px; resize: vertical; background: white; color: #374151; }
 .token-label { display: block; margin-bottom: 5px; }
 .diagnostic-actions { display: flex; align-items: center; gap: 8px; margin: 10px 0 16px; }
@@ -96,6 +100,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; backgroun
 .message-banner > div { flex: 1; min-width: 0; }
 .message-banner small { font-size: 9px; color: #6b7280; }
 .message-banner h3 { font-size: 14px; font-weight: 600; margin: 7px 0; overflow-wrap: anywhere; }
+.message-banner h4 { font-size: 12px; font-weight: 600; margin: 8px 0 4px; overflow-wrap: anywhere; }
 .message-banner p { font-size: 12px; line-height: 1.6; margin: 0; overflow-wrap: anywhere; }
 .how-section { border-top: 1px solid #e5e7eb; background: #fff; padding: 32px 24px 36px; text-align: center; }
 .how-inner { max-width: 940px; margin: auto; }
@@ -113,6 +118,8 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; backgroun
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (min-width: 1500px) { .experience-section { padding-top: 55px; padding-bottom: 44px; } }
 @media (max-width: 640px) {
+  .diagnostic-values { grid-template-columns: 1fr; gap: 3px; }
+  .diagnostic-values dd { margin-bottom: 7px; }
   .push-header { height: 76px; padding: 0 20px; }
   .brand { gap: 10px; flex-wrap: wrap; }
   .brand strong { font-size: 21px; }

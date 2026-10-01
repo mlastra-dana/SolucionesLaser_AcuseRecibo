@@ -5,8 +5,18 @@ export type PushEvent = {
   messageId?: string;
   timestamp: string;
   context: 'foreground' | 'background';
+  title?: string;
+  body?: string;
   payload: Record<string, unknown>;
 };
+
+export function getMessageDetails(payload: Record<string, unknown>) {
+  const notification = payload.notification as Record<string, unknown> | undefined;
+  const data = payload.data as Record<string, unknown> | undefined;
+  const title = notification?.title ?? data?.title;
+  const body = notification?.body ?? data?.body;
+  return { title: typeof title === 'string' ? title : undefined, body: typeof body === 'string' ? body : undefined };
+}
 
 // Only diagnostic events are kept locally, capped at 50. Visitor names and tokens are not stored here.
 function openDatabase(): Promise<IDBDatabase> {
@@ -34,7 +44,7 @@ export async function recordPushEvent(type: PushEventType, context: PushEvent['c
   const messageId = typeof payload.messageId === 'string' ? payload.messageId : undefined;
   const event: PushEvent = {
     id: messageId ? `${type}:${messageId}` : crypto.randomUUID(),
-    type, context, messageId, timestamp: new Date().toISOString(), payload
+    type, context, messageId, timestamp: new Date().toISOString(), ...getMessageDetails(payload), payload
   };
   const db = await openDatabase();
   try {

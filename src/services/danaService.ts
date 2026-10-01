@@ -1,5 +1,5 @@
 export type PushVisitor = { nombre: string; apellido: string; token: string };
-export type DanaVisitorPayload = PushVisitor & { source: 'DANA_PUSH_EXPERIENCE' };
+export type DanaVisitorPayload = PushVisitor & { source?: 'DANA_PUSH_EXPERIENCE' };
 
 // Phase 1 deliberately has no network call, even if a future API URL is configured.
 export async function registerPushVisitor(payload: DanaVisitorPayload) {

@@ -16,11 +16,11 @@ const config = {
 async function fixture(worker = false, overrides = {}) {
   const h = {
     supported: true, requested: 0, permissionResult: 'granted', token: 'test-fcm-token',
-    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {},
+    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0,
     async record(type, context, payload) { h.events.push({ type, context, payload }); }
   };
   const modules = {
-    'firebase/app': 'export const getApps = () => []; export const initializeApp = config => config;',
+    'firebase/app': 'export const getApps = () => h.apps; export const initializeApp = (config, name = "[DEFAULT]") => { h.initializationCount++; const app = { name, options: config }; h.apps.push(app); return app; };',
     'firebase/messaging': `export const isSupported = async () => h.supported;
       export const getMessaging = app => app;
       export const onMessage = (_app, fn) => { h.foreground = fn; return () => h.unsubscribeCount++; };
@@ -46,12 +46,13 @@ async function fixture(worker = false, overrides = {}) {
     h, console, setTimeout, clearTimeout, URL,
     Notification: notification,
     window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout },
-    navigator: { serviceWorker: { register: async (url, options) => { h.registration = { url, options }; return { active: {} }; } } },
+    navigator: { serviceWorker: { getRegistration: async () => h.workerRegistration, register: async (url, options) => { h.registration = { url, options }; return { active: {} }; } } },
     self: {
+      skipWaiting: async () => { h.skippedWaiting = true; },
       location: { origin: 'https://demo.example' },
       addEventListener: (type, fn) => { h.listeners[type] = fn; },
       registration: { showNotification: async (...args) => h.notices.push(args) },
-      clients: { matchAll: async () => h.clients, openWindow: async url => { h.openedUrl = url; return {}; } }
+      clients: { claim: async () => { h.claimed = true; }, matchAll: async () => h.clients, openWindow: async url => { h.openedUrl = url; return {}; } }
     }
   });
   vm.runInContext(result.outputFiles[0].text, context);
@@ -67,6 +68,7 @@ test('FCM registration uses permission, explicit worker and VAPID, with no DANA 
   assert.equal(h.registration.url, '/firebase-messaging-sw.js');
   assert.equal(h.options.vapidKey, config.VITE_FIREBASE_VAPID_KEY);
   assert.ok(h.options.serviceWorkerRegistration.active);
+  assert.equal(h.initializationCount, 1);
   await h.foreground({ messageId: 'm1', notification: { title: 'Real callback fixture' } });
   assert.equal(h.events[0].type, 'PUSH_RECEIVED');
   assert.equal(h.events[0].context, 'foreground');
@@ -172,4 +174,87 @@ test('future DANA URL still cannot initiate a conversation in phase 1', async ()
   assert.equal(result.status, 'pending');
   assert.equal(result.endpointConfigured, true);
   await assert.rejects(context.dana.registerPushVisitor({ nombre: '', apellido: 'B', token: 'test' }), /requiere/);
+});
+
+test('already granted browsers reconnect foreground reception without permission or token requests', async () => {
+  const { h, context } = await fixture();
+  assert.equal(await context.api.listenForPushMessages(() => {}), null);
+  assert.equal(h.initializationCount, 0);
+  context.Notification.permission = 'granted';
+  const received = [];
+  const stop = await context.api.listenForPushMessages(payload => received.push(payload));
+  await h.foreground({ messageId: 'reopened', notification: { title: 'Reopened fixture' } });
+  assert.equal(received.length, 1);
+  assert.equal(h.requested, 0);
+  assert.equal(h.options, undefined);
+  await context.api.registerPushBrowser(() => {});
+  assert.equal(h.initializationCount, 1);
+  stop();
+});
+
+test('conflicting Firebase app is rejected without adding another initialization', async () => {
+  const { h, context } = await fixture();
+  h.apps.push({ name: 'dana-push-experience', options: { appId: 'old-app', projectId: config.VITE_FIREBASE_PROJECT_ID } });
+  await assert.rejects(context.api.registerPushBrowser(() => {}), /configuración Firebase cambió/);
+  assert.equal(h.initializationCount, 0);
+});
+
+test('diagnostics describe the current permission, worker script and scope', async () => {
+  const { h, context } = await fixture();
+  h.workerRegistration = { scope: 'https://demo.example/', active: { state: 'activated', scriptURL: 'https://demo.example/firebase-messaging-sw.js' } };
+  context.Notification.permission = 'granted';
+  const result = await context.api.getPushDiagnostics();
+  assert.equal(result.permission, 'granted');
+  assert.equal(result.workerState, 'activated');
+  assert.equal(result.workerScope, 'https://demo.example/');
+  assert.equal(result.workerScript, 'https://demo.example/firebase-messaging-sw.js');
+  assert.equal(h.requested, 0);
+});
+
+test('data-only icon and HTTPS destination are honored', async () => {
+  const { h } = await fixture(true);
+  const payload = { messageId: 'with-url', data: { title: 'Fixture', icon: 'https://demo.example/icon.png', url: 'https://demo.example/?from=push' } };
+  await h.background(payload);
+  assert.equal(h.notices[0][1].icon, payload.data.icon);
+  let completed;
+  h.listeners.notificationclick({
+    notification: { data: h.notices[0][1].data, close() {} },
+    stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; }
+  });
+  await completed;
+  assert.equal(h.openedUrl, payload.data.url);
+});
+
+test('unsafe notification destination falls back to landing; FCM link supports HTTPS', async () => {
+  const { h } = await fixture(true);
+  async function click(payload) {
+    let completed;
+    h.listeners.notificationclick({
+      notification: { data: { FCM_MSG: payload }, close() {} },
+      stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; }
+    });
+    await completed;
+  }
+  await click({ fcmMessageId: 'url-1', data: { url: 'javascript:alert(1)' } });
+  assert.equal(h.openedUrl, 'https://demo.example/');
+  await click({ fcmMessageId: 'url-2', fcm_options: { link: 'https://demo.example/?from=fcm' } });
+  assert.equal(h.openedUrl, 'https://demo.example/?from=fcm');
+});
+
+test('worker activates updated deployment configuration without waiting for all tabs to close', async () => {
+  const { h } = await fixture(true);
+  let install, activate;
+  h.listeners.install({ waitUntil(promise) { install = promise; } });
+  h.listeners.activate({ waitUntil(promise) { activate = promise; } });
+  await Promise.all([install, activate]);
+  assert.ok(h.skippedWaiting);
+  assert.ok(h.claimed);
+});
+
+test('cancelled page effects cannot overwrite the active foreground listener', async () => {
+  const { h, context } = await fixture();
+  context.Notification.permission = 'granted';
+  assert.equal(await context.api.listenForPushMessages(() => {}, () => false), null);
+  assert.equal(h.foreground, undefined);
+  assert.equal(h.initializationCount, 0);
 });
