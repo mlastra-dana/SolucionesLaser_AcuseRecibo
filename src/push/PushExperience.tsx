@@ -195,8 +195,9 @@ export default function PushExperience() {
 
       <main>
         <section className="experience-section" aria-labelledby="experience-title">
+          <div className="experience-masthead">
           <div className="intro">
-            <div className="hero-bell"><img src="/push-notification.png" width="58" height="58" alt="" /></div>
+            <div className="hero-bell"><Bell size={27} strokeWidth={1.7} aria-hidden="true" /></div>
             <p className="eyebrow">CONEXIONES QUE LLEGAN AL INSTANTE</p>
             <h1 id="experience-title">¡Experimenta el poder de las <span>notificaciones Push!</span></h1>
             <p className="intro-description">Descubre cómo DANAconnect permite conectar con tus clientes mediante notificaciones instantáneas, directamente en sus dispositivos.</p>
@@ -204,6 +205,7 @@ export default function PushExperience() {
 
           <InstallExperience pwa={pwa} />
           {capabilities && !capabilities.supported && <p className="push-compatibility-note" role="status"><Info size={16} />{pushUnavailableMessage(capabilities.reason)}</p>}
+          </div>
 
           <div className="registration-panel">
             {!visitor ? (

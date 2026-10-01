@@ -27,7 +27,7 @@ export default defineConfig(({ mode }) => {
           url: '/' + item.fileName, revision: revision(item.type === 'chunk' ? item.code : item.source)
         }));
         if (!entries.some(item => item.url === '/index.html')) this.error('El precache PWA requiere index.html compilado.');
-        for (const file of ['manifest.webmanifest', 'push-notification.png', 'brand/logo-danaconnect-horizontal.png', 'pwa/icon-192.png', 'pwa/icon-512.png', 'pwa/icon-maskable-512.png', 'pwa/apple-touch-icon.png', 'pwa/favicon.png']) {
+        for (const file of ['manifest.webmanifest', 'push-notification.png', 'brand/logo-danaconnect-horizontal.png', 'brand/push-experience-background.webp', 'pwa/icon-192.png', 'pwa/icon-512.png', 'pwa/icon-maskable-512.png', 'pwa/apple-touch-icon.png', 'pwa/favicon.png']) {
           entries.push({ url: '/' + file, revision: revision(readFileSync('public/' + file)) });
         }
         this.emitFile({ type: 'asset', fileName: 'firebase-messaging-sw.js', source: await bundleWorker(entries) });
