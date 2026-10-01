@@ -6,6 +6,8 @@ node_modules
 dist
 .vite
 coverage
+output/playwright
+.playwright-cli
 
 # Environment files
 .env

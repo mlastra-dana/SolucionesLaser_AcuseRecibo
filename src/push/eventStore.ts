@@ -1,0 +1,71 @@
+export type PushEventType = 'PUSH_RECEIVED' | 'PUSH_OPENED' | 'PUSH_CLICKED';
+export type PushEvent = {
+  id: string;
+  type: PushEventType;
+  messageId?: string;
+  timestamp: string;
+  context: 'foreground' | 'background';
+  payload: Record<string, unknown>;
+};
+
+// Only diagnostic events are kept locally, capped at 50. Visitor names and tokens are not stored here.
+function openDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('dana-push-events', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('events', { keyPath: 'id' });
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function readPushEvents(): Promise<PushEvent[]> {
+  const db = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('events', 'readonly');
+      const request = tx.objectStore('events').getAll();
+      tx.oncomplete = () => resolve((request.result as PushEvent[]).sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+
+export async function recordPushEvent(type: PushEventType, context: PushEvent['context'], payload: Record<string, unknown>): Promise<PushEvent> {
+  const messageId = typeof payload.messageId === 'string' ? payload.messageId : undefined;
+  const event: PushEvent = {
+    id: messageId ? `${type}:${messageId}` : crypto.randomUUID(),
+    type, context, messageId, timestamp: new Date().toISOString(), payload
+  };
+  const db = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('events', 'readwrite');
+      const store = tx.objectStore('events');
+      const existing = store.get(event.id);
+      existing.onsuccess = () => {
+        if (!existing.result) store.put(event);
+        const all = store.getAll();
+        all.onsuccess = () => {
+          const sorted = (all.result as PushEvent[]).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+          sorted.slice(50).forEach(item => store.delete(item.id));
+        };
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+  return event;
+}
+
+export async function clearPushEvents() {
+  const db = await openDatabase();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('events', 'readwrite');
+      tx.objectStore('events').clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
