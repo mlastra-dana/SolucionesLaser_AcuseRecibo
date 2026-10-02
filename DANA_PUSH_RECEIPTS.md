@@ -44,5 +44,5 @@ Despues de publicar esta rama:
 2. Verificar que la respuesta de register contiene `pushRef`, `eventAuthToken` y `resultId` sin copiar el token a capturas o logs.
 3. Recibir el Push real. Diagnostico: asociacion Si, ultimo evento PUSH_RECEIVED, envio aceptado y pendientes 0.
 4. Comprobar que el POST de evento usa la referencia e ID del mensaje y fecha de recepcion originales. No ejecutar Lambda Test ni otro registro para reportar.
-5. Esperar el procesamiento de UPDALL y verificar en la misma fila `PUSH_ESTADO=PUSH_RECEIVED`, `PUSH_RECIBIDO_AT` y `PUSH_MESSAGE_ID` correspondientes. El estado aceptado por si solo no prueba este paso.
+5. Esperar el procesamiento de UPDALL y verificar en la misma fila `PUSH_STATUS=PUSH_RECEIVED`, `PUSH_RECEIVED_AT` y `PUSH_MESSAGE_ID` correspondientes (nomenclatura actual Push Tracking V1, mapeada exclusivamente por Lambda). El estado aceptado por si solo no prueba este paso.
 6. Repetir una prueba coordinada en segundo plano, Chrome e iPhone instalado. Probar retorno de conexion sin perder la fecha original. No provocar 400/403 en produccion para probar fallos.

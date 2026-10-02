@@ -1,6 +1,6 @@
 # Apertura y Clic
 
-El usuario confirma la recepcion real de fase 1 en Contact Manager, UID 19: PUSH_ESTADO=PUSH_RECEIVED, PUSH_RECIBIDO_AT y PUSH_MESSAGE_ID correctos. Esa prueba no es simulada. Esta ampliacion mantiene el mismo endpoint, autenticacion por referencia, IndexedDB y contrato de recepcion. No modifica Start Conversation, Lambda, variables de entorno, Firebase ni VAPID. No crea tablas ni contactos adicionales.
+El usuario confirma la recepcion real de fase 1 en Contact Manager, UID 19, con estado, fecha de recepcion y PUSH_MESSAGE_ID correctos. Esa prueba no es simulada y fue anterior al estandar Push Tracking V1; sus campos equivalentes actuales son PUSH_STATUS y PUSH_RECEIVED_AT. Esta ampliacion mantiene el mismo endpoint, autenticacion por referencia, IndexedDB y contrato de recepcion. No modifica Start Conversation, Lambda, variables de entorno, Firebase ni VAPID. No crea tablas ni contactos adicionales.
 
 ## Interacciones
 
@@ -16,7 +16,9 @@ Se mantienen version 1 y los stores existentes de dana-push-receipts: associatio
 
 Las claves nuevas son JSON de `[pushRef, messageId, eventType, accion]`. Cada evento conserva el primer timestamp UTC de su interaccion real. Reabrir o pulsar varias veces el mismo CTA no repite reportes; tipos distintos no se deduplican entre si. El historial visual sigue separado de la cola persistente.
 
-Los tres eventos envian exactamente las mismas siete claves: action=event, push_ref, eventAuthToken, event, messageId, timestamp, accion. Apertura usa accion vacia; clic usa CONOCER_MAS. Nunca se envian campos de registro ni fechas anteriores vacias. El backend conserva su CSV dinamico por evento, por lo que estos POST no piden borrar PUSH_RECIBIDO_AT ni PUSH_ABIERTO_AT.
+Los tres eventos envian exactamente las mismas siete claves: action=event, push_ref, eventAuthToken, event, messageId, timestamp, accion. Apertura usa accion vacia; clic usa CONOCER_MAS. Nunca se envian campos de registro ni fechas anteriores vacias. El backend conserva su CSV dinamico por evento, por lo que estos POST no piden borrar PUSH_RECEIVED_AT ni PUSH_OPENED_AT.
+
+Push Tracking V1: solo Lambda transforma event, timestamp y accion a PUSH_STATUS, PUSH_RECEIVED_AT, PUSH_OPENED_AT, PUSH_CLICKED_AT y PUSH_CLICK_ACTION. PUSH_REF y PUSH_MESSAGE_ID conservan sus nombres en Contact Manager. Estos codigos no sustituyen las propiedades del JSON del frontend ni requieren migrar IndexedDB o sus credenciales.
 
 ## Orden y Reintentos
 
@@ -41,7 +43,7 @@ Despues de publicar y actualizar online la PWA:
 1. Registrar desde la PWA y recibir un Push. Confirmar la recepcion existente y su fecha.
 2. Tocar la notificacion del sistema o Abrir mensaje del historial. Confirmar PUSH_OPENED, accion vacia, mismo push_ref/messageId y fecha UTC de esa apertura.
 3. Elegir Conocer mas. Confirmar PUSH_CLICKED, accion CONOCER_MAS, misma referencia/ID y fecha UTC del clic.
-4. Esperar procesamiento de UPDALL y comprobar en la misma fila PUSH_RECIBIDO_AT, PUSH_ABIERTO_AT, PUSH_CLICK_AT, PUSH_ACCION=CONOCER_MAS, PUSH_ESTADO=PUSH_CLICKED y PUSH_MESSAGE_ID.
+4. Esperar procesamiento de UPDALL y comprobar en la misma fila PUSH_RECEIVED_AT, PUSH_OPENED_AT, PUSH_CLICKED_AT, PUSH_CLICK_ACTION=CONOCER_MAS, PUSH_STATUS=PUSH_CLICKED y PUSH_MESSAGE_ID.
 5. Reabrir y repetir el CTA: no debe haber otro register ni otro reporte para esas claves. Probar app visible, segundo plano y red temporalmente perdida, sin provocar fallos deliberados en produccion.
 
 No se hizo deploy, AWS Lambda Test ni nueva prueba real de Contact Manager desde esta ampliacion.
