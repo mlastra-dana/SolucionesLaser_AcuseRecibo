@@ -18,7 +18,7 @@ El store `receipts` conserva las recepciones, independiente del historial visual
 
 ## Contrato de Evento
 
-POST a la misma `VITE_DANA_PUSH_API_URL`, con exactamente `action`, `push_ref`, `eventAuthToken`, `event`, `messageId`, `timestamp`, `accion`. `action=event`, `event=PUSH_RECEIVED`, `accion=""`. Sin NOMBRE, EMAIL, TELEFONO ni TOKEN FCM en este POST: no invoca otro register ni crea otro contacto.
+POST a la misma `VITE_DANA_PUSH_API_URL`, con `action`, `push_ref`, `eventAuthToken`, `event`, `messageId`, `timestamp`, `accion` y, en la version actual, `timezone` IANA capturada con el evento. `action=event`, `event=PUSH_RECEIVED`, `accion=""`. timestamp sigue siendo UTC; solo Lambda convierte a hora local. Sin NOMBRE, EMAIL, TELEFONO ni TOKEN FCM en este POST: no invoca otro register ni crea otro contacto.
 
 El Worker importa el mismo modulo de tracking; `vite.config.ts` ya sustituye `import.meta.env` durante el bundle esbuild. No intenta acceder a variables Vite en runtime. La URL HTTPS es publica; el token de evento llega solo desde la respuesta de register, nunca se incorpora al build. No se cachean POSTs.
 

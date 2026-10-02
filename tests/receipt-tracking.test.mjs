@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 
 const endpoint = 'https://lambda.example/register';
 const compiled = await build({
-  stdin: { contents: "import * as tracking from './src/push/receiptTracking'; import * as dana from './src/services/danaService'; globalThis.tracking = tracking; globalThis.dana = dana;", resolveDir: process.cwd(), loader: 'ts' },
+  stdin: { contents: "import * as tracking from './src/push/receiptTracking'; import * as dana from './src/services/danaService'; import * as timezones from './src/push/eventTimezone'; globalThis.tracking = tracking; globalThis.dana = dana; globalThis.timezones = timezones;", resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'iife', platform: 'browser',
   define: { 'import.meta.env': JSON.stringify({ VITE_DANA_PUSH_API_URL: endpoint }) }
 });
@@ -15,12 +15,19 @@ const compiled = await build({
 function fixture(indexedDB = new IDBFactory()) {
   let now = Date.parse('2026-10-02T12:00:00.000Z');
   const requests = [];
-  const h = { response: { status: 202, json: async () => ({ success: true, uploadAccepted: true }) } };
+  const h = { timezone: 'America/Caracas', timezoneFailure: false, response: { status: 202, json: async () => ({ success: true, uploadAccepted: true }) } };
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
     static now() { return now; }
   }
-  const context = vm.createContext({ indexedDB, Date: Clock, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout,
+  function DateTimeFormat(locale, options) {
+    if (locale === undefined && options === undefined) {
+      if (h.timezoneFailure) throw new Error('Timezone unavailable');
+      return { resolvedOptions: () => ({ timeZone: h.timezone }) };
+    }
+    return new Intl.DateTimeFormat(locale, options);
+  }
+  const context = vm.createContext({ indexedDB, Intl: { DateTimeFormat }, Date: Clock, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout,
     fetch: async (url, options) => { requests.push({ url, body: JSON.parse(options.body), options }); return h.fetch ? h.fetch(url, options) : h.response; }
   });
   vm.runInContext(compiled.outputFiles[0].text, context);
@@ -43,7 +50,7 @@ test('receipt before register waits for matching persisted association and prese
   await f.tracking.flushPushReceipts();
   assert.equal(f.requests.length, 1);
   assert.equal(f.requests[0].url, endpoint);
-  assert.deepEqual(f.requests[0].body, { action: 'event', push_ref: 'PUSH-A', eventAuthToken: 'private-fixture-auth', event: 'PUSH_RECEIVED', messageId: 'firebase-message-1', timestamp: '2026-10-02T12:00:00.000Z', accion: '' });
+  assert.deepEqual(f.requests[0].body, { action: 'event', push_ref: 'PUSH-A', eventAuthToken: 'private-fixture-auth', event: 'PUSH_RECEIVED', messageId: 'firebase-message-1', timestamp: '2026-10-02T12:00:00.000Z', timezone: 'America/Caracas', accion: '' });
   assert.equal(f.requests[0].options.cache, 'no-store');
   assert.equal(f.requests[0].options.credentials, 'omit');
   assert.equal((await f.tracking.getReceiptDiagnostics()).status, 'accepted');
@@ -213,7 +220,11 @@ test('three event types use exact contract and original timestamps, ordered by s
   assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED', 'PUSH_CLICKED']);
   assert.deepEqual(f.requests.map(item => item.body.accion), ['', '', 'CONOCER_MAS']);
   assert.deepEqual(f.requests.map(item => item.body.timestamp), ['2026-10-02T12:01:00.000Z', '2026-10-02T12:02:00.000Z', '2026-10-02T12:03:00.000Z']);
-  for (const { body } of f.requests) assert.deepEqual(Object.keys(body).sort(), ['action', 'push_ref', 'eventAuthToken', 'event', 'messageId', 'timestamp', 'accion'].sort());
+  for (const { body } of f.requests) {
+    assert.deepEqual(Object.keys(body).sort(), ['action', 'push_ref', 'eventAuthToken', 'event', 'messageId', 'timestamp', 'timezone', 'accion'].sort());
+    assert.equal(body.timezone, 'America/Caracas');
+    assert.equal(new Date(body.timestamp).toISOString(), body.timestamp);
+  }
   assert.equal((await f.tracking.getReceiptDiagnostics()).events.length, 3);
 });
 
@@ -279,6 +290,130 @@ test('phase-one stored receipts and dedup keys remain valid without database ver
   await f.tracking.flushPushReceipts();
   assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED']);
   assert.equal(f.requests[0].body.timestamp, '2026-10-02T10:00:00.000Z');
+  assert.equal(f.requests[0].body.timezone, 'UTC');
+  assert.equal((await f.tracking.getReceiptDiagnostics()).events.find(item => item.eventType === 'PUSH_RECEIVED').timezoneWarning, 'legacy');
+});
+
+test('all pending events persist their UTC instant and event-time timezone across retries and duplicates', async () => {
+  const db = new IDBFactory(), page = fixture(db);
+  await page.tracking.saveReceiptAssociation(association());
+  for (const [type, action] of [['PUSH_RECEIVED', ''], ['PUSH_OPENED', ''], ['PUSH_CLICKED', 'CONOCER_MAS']]) {
+    await page.tracking.queuePushEvent(type, payload(), '2026-10-02T20:02:15.000Z', action);
+  }
+  page.h.response = { status: 503 };
+  await page.tracking.flushPushReceipts();
+  const worker = fixture(db);
+  worker.h.timezone = 'America/New_York';
+  worker.advance(30_001);
+  await worker.tracking.queuePushReceipt(payload(), '2026-10-03T12:00:00.000Z');
+  await worker.tracking.flushPushReceipts();
+  assert.equal(worker.requests.length, 3);
+  for (const { body } of [...page.requests, ...worker.requests]) {
+    assert.equal(body.timezone, 'America/Caracas');
+    assert.equal(body.timestamp, '2026-10-02T20:02:15.000Z');
+  }
+  const request = db.open('dana-push-receipts', 1);
+  await new Promise((resolve, reject) => { request.onsuccess = resolve; request.onerror = reject; });
+  const read = request.result.transaction('receipts').objectStore('receipts').getAll();
+  const stored = await new Promise((resolve, reject) => { read.onsuccess = () => resolve(read.result); read.onerror = reject; });
+  request.result.close();
+  assert.equal(stored.length, 3);
+  assert.ok(stored.every(item => item.timezone === 'America/Caracas' && item.timestamp === '2026-10-02T20:02:15.000Z'));
+});
+
+test('worker without timezone detection uses last valid PWA timezone without window or document', async () => {
+  const db = new IDBFactory(), page = fixture(db);
+  page.h.timezone = 'America/Lima';
+  assert.equal((await page.tracking.getReceiptDiagnostics()).timezone, 'America/Lima');
+  const worker = fixture(db);
+  worker.h.timezoneFailure = true;
+  assert.equal(worker.context.window, undefined);
+  assert.equal(worker.context.document, undefined);
+  await worker.tracking.saveReceiptAssociation(association());
+  await worker.tracking.queuePushReceipt(payload());
+  await worker.tracking.flushPushReceipts();
+  assert.equal(worker.requests[0].body.timezone, 'America/Lima');
+  const diagnostics = await worker.tracking.getReceiptDiagnostics();
+  assert.equal(diagnostics.timezoneWarning, 'stored');
+  assert.equal(diagnostics.events[0].timezoneWarning, 'stored');
+});
+
+test('unavailable or invalid IANA timezone falls back explicitly to UTC with sanitized diagnostics', async () => {
+  for (const timezone of [undefined, '', 'Invalid/Timezone', '+04:00']) {
+    const f = fixture();
+    f.h.timezone = timezone;
+    await f.tracking.saveReceiptAssociation(association());
+    await f.tracking.queuePushReceipt(payload());
+    await f.tracking.flushPushReceipts();
+    assert.equal(f.requests[0].body.timezone, 'UTC');
+    const diagnostics = await f.tracking.getReceiptDiagnostics();
+    assert.equal(diagnostics.timezone, 'UTC');
+    assert.equal(diagnostics.timezoneWarning, 'utc');
+    assert.equal(diagnostics.events[0].timezoneWarning, 'utc');
+    assert.equal(JSON.stringify(diagnostics).includes('eventAuthToken'), false);
+  }
+});
+
+test('missing Intl in a worker cannot overwrite previously validated event timezone', async () => {
+  const db = new IDBFactory(), page = fixture(db);
+  await page.tracking.saveReceiptAssociation(association());
+  await page.tracking.queuePushReceipt(payload());
+  const worker = fixture(db);
+  worker.context.Intl = undefined;
+  await worker.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await worker.tracking.flushPushReceipts();
+  assert.equal(worker.requests.length, 2);
+  assert.ok(worker.requests.every(item => item.body.timezone === 'America/Caracas'));
+  assert.equal((await worker.tracking.getReceiptDiagnostics()).timezoneWarning, 'stored');
+  assert.equal(worker.timezones.formatEventTime('2026-10-02T12:00:00Z'), '2026-10-02T12:00:00.000Z (UTC)');
+});
+
+test('UTC fallback captured offline is not replaced when timezone detection becomes available', async () => {
+  const f = fixture();
+  f.h.timezoneFailure = true;
+  await f.tracking.queuePushReceipt(payload());
+  f.h.timezoneFailure = false;
+  f.advance(60_000);
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests[0].body.timezone, 'UTC');
+  assert.equal(f.requests[0].body.timestamp, '2026-10-02T12:00:00.000Z');
+  assert.equal((await f.tracking.getReceiptDiagnostics()).timezone, 'America/Caracas');
+});
+
+test('metadata storage failure does not discard a valid timezone or prevent event reporting', async () => {
+  const db = new IDBFactory();
+  const f = fixture({ open(name, version) {
+    if (name === 'dana-push-timezone') throw new Error('Metadata blocked');
+    return db.open(name, version);
+  } });
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.queuePushReceipt(payload());
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].body.timezone, 'America/Caracas');
+  assert.equal((await f.tracking.getReceiptDiagnostics()).status, 'accepted');
+});
+
+test('device set explicitly to UTC is valid and does not show a fallback warning', async () => {
+  const f = fixture();
+  f.h.timezone = 'UTC';
+  await f.tracking.queuePushReceipt(payload());
+  const diagnostics = await f.tracking.getReceiptDiagnostics();
+  assert.equal(diagnostics.timezone, 'UTC');
+  assert.equal(diagnostics.timezoneWarning, undefined);
+  assert.equal(diagnostics.events[0].timezoneWarning, undefined);
+});
+
+test('local rendering uses explicit AM/PM, midnight/noon and DST without changing UTC timestamps', () => {
+  const f = fixture();
+  const timestamp = '2026-10-02T20:02:15Z';
+  assert.equal(f.timezones.formatEventTime(timestamp, 'America/Caracas'), '2026-10-02 04:02:15 PM');
+  assert.equal(f.timezones.formatEventTime('2026-10-02T04:00:00Z', 'America/Caracas'), '2026-10-02 12:00:00 AM');
+  assert.equal(f.timezones.formatEventTime('2026-10-02T16:00:00Z', 'America/Caracas'), '2026-10-02 12:00:00 PM');
+  assert.equal(f.timezones.formatEventTime('2026-01-02T20:02:15Z', 'America/New_York'), '2026-01-02 03:02:15 PM');
+  assert.equal(f.timezones.formatEventTime(timestamp, 'America/New_York'), '2026-10-02 04:02:15 PM');
+  assert.equal(timestamp, '2026-10-02T20:02:15Z');
 });
 
 test('separate contexts cannot send opened while receipt is leased, and diagnostics distinguish sending from accepted', async () => {

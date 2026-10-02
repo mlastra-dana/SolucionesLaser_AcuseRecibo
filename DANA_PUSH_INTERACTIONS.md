@@ -16,9 +16,19 @@ Se mantienen version 1 y los stores existentes de dana-push-receipts: associatio
 
 Las claves nuevas son JSON de `[pushRef, messageId, eventType, accion]`. Cada evento conserva el primer timestamp UTC de su interaccion real. Reabrir o pulsar varias veces el mismo CTA no repite reportes; tipos distintos no se deduplican entre si. El historial visual sigue separado de la cola persistente.
 
-Los tres eventos envian exactamente las mismas siete claves: action=event, push_ref, eventAuthToken, event, messageId, timestamp, accion. Apertura usa accion vacia; clic usa CONOCER_MAS. Nunca se envian campos de registro ni fechas anteriores vacias. El backend conserva su CSV dinamico por evento, por lo que estos POST no piden borrar PUSH_RECEIVED_AT ni PUSH_OPENED_AT.
+Los tres eventos envian exactamente las mismas ocho claves: action=event, push_ref, eventAuthToken, event, messageId, timestamp, timezone, accion. Apertura usa accion vacia; clic usa CONOCER_MAS. Nunca se envian campos de registro ni fechas anteriores vacias. El backend conserva su CSV dinamico por evento, por lo que estos POST no piden borrar PUSH_RECEIVED_AT ni PUSH_OPENED_AT.
 
 Push Tracking V1: solo Lambda transforma event, timestamp y accion a PUSH_STATUS, PUSH_RECEIVED_AT, PUSH_OPENED_AT, PUSH_CLICKED_AT y PUSH_CLICK_ACTION. PUSH_REF y PUSH_MESSAGE_ID conservan sus nombres en Contact Manager. Estos codigos no sustituyen las propiedades del JSON del frontend ni requieren migrar IndexedDB o sus credenciales.
+
+## Zona Horaria del Dispositivo
+
+El servicio compartido por React y Worker captura `Intl.DateTimeFormat().resolvedOptions().timeZone` al generar cada evento y valida su identificador mediante Intl. Guarda timezone junto al timestamp UTC original en receipts; reintentos y duplicados no reemplazan ninguno de los dos. Solo Lambda convierte el instante a hora local para Contact Manager.
+
+La metadata no sensible lastValidTimezone se conserva en IndexedDB dana-push-timezone, store settings, version 1. Se actualiza durante el uso de la PWA y al capturar eventos. Si la deteccion falla en el Worker, recupera esa ultima zona valida; si no existe, guarda UTC con advertencia diagnostica. No depende de window, document, idioma o region AWS. Las bases dana-push-receipts y dana-push-events mantienen su version, stores, asociaciones y registros.
+
+Eventos anteriores sin timezone conservan el instante UTC y se envian con UTC explicito; no se inventa una zona historica usando la configuracion actual. La advertencia por evento distingue esta compatibilidad del fallback de eventos nuevos. El diagnostico muestra la zona actual y las horas de cada evento con su zona capturada en formato YYYY-MM-DD hh:mm:ss AM/PM. El historial visual usa la zona actual del dispositivo. Ninguna representacion visual cambia el timestamp persistido.
+
+Validacion horaria local del 2026-10-02: build correcto y 69 pruebas aprobadas, incluidos los tres contratos, persistencia/reintentos, deduplicacion, metadata no disponible, recuperacion desde Worker sin window/document/Intl, eventos antiguos, UTC explicito y AM/PM con horario de verano. Chromium con America/Caracas mostro 2026-10-02 04:02:15 PM para 2026-10-02T20:02:15.000Z en 320, 390 y 1440 px sin desbordamiento ni credenciales visibles. Solo se usaron fixtures locales; no se invoco Lambda ni se verifico Contact Manager en esta prueba.
 
 ## Orden y Reintentos
 

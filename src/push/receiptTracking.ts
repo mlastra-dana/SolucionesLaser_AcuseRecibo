@@ -1,17 +1,20 @@
+import { captureDeviceTimezone, storedEventTimezone, type EventTimezone } from './eventTimezone';
+
 export type ReceiptAssociation = { pushRef: string; eventAuthToken: string; resultId?: string | number };
 type Association = ReceiptAssociation & { savedAt: string };
 export type TrackingEventType = 'PUSH_RECEIVED' | 'PUSH_OPENED' | 'PUSH_CLICKED';
 type Receipt = {
   id: string; pushRef: string; messageId: string; timestamp: string;
-  eventType?: TrackingEventType; accion?: string;
+  eventType?: TrackingEventType; accion?: string; timezone?: string; timezoneWarning?: EventTimezone['timezoneWarning'];
   status: 'pending' | 'sending' | 'accepted' | 'error' | 'superseded'; attempts: number; retryAt: number;
   lastAttemptAt?: string; acceptedAt?: string;
   terminal: boolean; leaseUntil: number; owner?: string;
 };
 export type ReceiptDiagnostics = {
+  timezone: string; timezoneWarning?: EventTimezone['timezoneWarning'];
   associated: boolean; lastEvent: TrackingEventType | null;
   status: Receipt['status'] | null; pending: number;
-  events: { id: string; eventType: TrackingEventType; messageId: string; timestamp: string; status: Receipt['status']; sent: boolean; accepted: boolean; accion: string }[];
+  events: ({ id: string; eventType: TrackingEventType; messageId: string; timestamp: string; status: Receipt['status']; sent: boolean; accepted: boolean; accion: string } & EventTimezone)[];
 };
 
 const rank = { PUSH_RECEIVED: 0, PUSH_OPENED: 1, PUSH_CLICKED: 2 };
@@ -85,6 +88,7 @@ export async function queuePushEvent(type: TrackingEventType, payload: Record<st
   const pushRef = typeof data?.push_ref === 'string' ? data.push_ref : '';
   const messageId = typeof payload.messageId === 'string' ? payload.messageId : '';
   if (!pushRef.trim() || !messageId.trim()) return;
+  const timezone = await captureDeviceTimezone();
   const id = JSON.stringify([pushRef, messageId, type, accion]);
   await transaction<void>('readwrite', (tx, result) => {
     const store = tx.objectStore('receipts');
@@ -93,7 +97,7 @@ export async function queuePushEvent(type: TrackingEventType, payload: Record<st
       const all = request.result as Receipt[];
       // Includes phase-one keys (three parts) without migrating or deleting existing records.
       if (!all.some(item => item.pushRef === pushRef && item.messageId === messageId && eventType(item) === type && (item.accion ?? '') === accion)) {
-        const item: Receipt = { id, pushRef, messageId, eventType: type, accion, timestamp, status: 'pending', attempts: 0, retryAt: 0, terminal: false, leaseUntil: 0 };
+        const item: Receipt = { id, pushRef, messageId, eventType: type, accion, timestamp, ...timezone, status: 'pending', attempts: 0, retryAt: 0, terminal: false, leaseUntil: 0 };
         if (advanced(item, all)) { item.status = 'superseded'; item.terminal = true; }
         store.add(item);
       }
@@ -118,7 +122,7 @@ async function claimReceipt(id: string) {
       credentials.onsuccess = () => {
         const association = credentials.result as Association | undefined;
         if (!association) return;
-        const claimed: Receipt = { ...receipt, status: 'sending', lastAttemptAt: new Date().toISOString(), owner: crypto.randomUUID(), leaseUntil: now + 45_000, attempts: receipt.attempts + 1 };
+        const claimed: Receipt = { ...receipt, ...storedEventTimezone(receipt), status: 'sending', lastAttemptAt: new Date().toISOString(), owner: crypto.randomUUID(), leaseUntil: now + 45_000, attempts: receipt.attempts + 1 };
         store.put(claimed);
         result({ receipt: claimed, association });
       };
@@ -165,7 +169,7 @@ export async function flushPushReceipts() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         credentials: 'omit', cache: 'no-store', redirect: 'error', signal: controller.signal,
         body: JSON.stringify({ action: 'event', push_ref: receipt.pushRef, eventAuthToken: association.eventAuthToken,
-          event: eventType(receipt), messageId: receipt.messageId, timestamp: receipt.timestamp, accion: receipt.accion ?? '' })
+          event: eventType(receipt), messageId: receipt.messageId, timestamp: receipt.timestamp, timezone: receipt.timezone, accion: receipt.accion ?? '' })
       });
       terminal = response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status);
       if (response.status === 202) {
@@ -179,6 +183,7 @@ export async function flushPushReceipts() {
 }
 
 export async function getReceiptDiagnostics(): Promise<ReceiptDiagnostics> {
+  const timezone = await captureDeviceTimezone();
   return transaction<ReceiptDiagnostics>('readonly', (tx, result) => {
     let associated = false;
     const associations = tx.objectStore('associations').count();
@@ -186,9 +191,9 @@ export async function getReceiptDiagnostics(): Promise<ReceiptDiagnostics> {
     const receipts = tx.objectStore('receipts').getAll();
     receipts.onsuccess = () => {
       const items = (receipts.result as Receipt[]).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      result({ associated, lastEvent: items[0] ? eventType(items[0]) : null,
+      result({ ...timezone, associated, lastEvent: items[0] ? eventType(items[0]) : null,
         status: items[0]?.status ?? null, pending: items.filter(outstanding).length,
-        events: items.slice(0, 20).map(item => ({ id: item.id, eventType: eventType(item), messageId: item.messageId, timestamp: item.timestamp,
+        events: items.slice(0, 20).map(item => ({ ...storedEventTimezone(item), id: item.id, eventType: eventType(item), messageId: item.messageId, timestamp: item.timestamp,
           status: item.status, sent: item.attempts > 0, accepted: item.status === 'accepted', accion: item.accion ?? '' })) });
     };
   });
