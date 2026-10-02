@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowRight, Bell, BellRing, Check, CheckCircle2, Info, LoaderCircle, LockKeyhole, RefreshCw, UserRound, X } from 'lucide-react';
+import { ArrowRight, ArrowUpRight, Bell, BellRing, Check, CheckCircle2, Info, LoaderCircle, LockKeyhole, RefreshCw, UserRound, X } from 'lucide-react';
 import type { MessagePayload } from 'firebase/messaging';
 import { listenForPushMessages, registerPushBrowser } from '../services/pushService';
 import { registerPushVisitor, type PushVisitor } from '../services/danaService';
@@ -10,6 +10,7 @@ import InstallExperience from './InstallExperience';
 import NotificationsHistory from './NotificationsHistory';
 import { flushPushReceipts, getReceiptDiagnostics, nextReceiptAttempt, queuePushEvent, type ReceiptDiagnostics } from './receiptTracking';
 import { formatEventTime } from './eventTimezone';
+import { followNotificationCta } from './followNotificationCta';
 
 const demoMode = import.meta.env.VITE_PUSH_DEMO_MODE !== 'false';
 type RegistrationStage = 'Validando información' | 'Conectando con Firebase' | 'Registrando dispositivo' | 'Enviando información a DANAconnect' | 'Preparando notificación' | 'Registro completado';
@@ -35,8 +36,8 @@ export default function PushExperience() {
   const [latest, setLatest] = useState<MessagePayload | null>(null);
   const [latestTimestamp, setLatestTimestamp] = useState('');
   const [revealed, setRevealed] = useState(false);
-  const [showMore, setShowMore] = useState(window.location.hash === '#conocer-mas');
-  const moreTitle = useRef<HTMLHeadingElement>(null);
+  const [ctaBusy, setCtaBusy] = useState(false);
+  const followingCta = useRef(false);
   const [messageContext, setMessageContext] = useState<'foreground' | 'background'>('foreground');
   const stop = useRef<(() => void) | null>(null);
   const listenerGeneration = useRef(0);
@@ -155,14 +156,6 @@ export default function PushExperience() {
 
   useEffect(() => { if (visitor) { successTitle.current?.focus(); setStage('Registro completado'); } }, [visitor]);
 
-  useEffect(() => {
-    const hashChanged = () => { if (window.location.hash === '#conocer-mas') setShowMore(true); };
-    window.addEventListener('hashchange', hashChanged);
-    return () => window.removeEventListener('hashchange', hashChanged);
-  }, []);
-
-  useEffect(() => { if (showMore) { moreTitle.current?.focus({ preventScroll: true }); moreTitle.current?.scrollIntoView({ block: 'center' }); } }, [showMore]);
-
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (submitting.current) return;
@@ -248,11 +241,19 @@ export default function PushExperience() {
     void flushPushReceipts().catch(() => {});
   }
 
-  async function learnMore() {
-    if (!latest || !revealed) return;
-    setShowMore(true);
-    moreTitle.current?.scrollIntoView({ block: 'center' });
-    await observeInteraction('PUSH_CLICKED', latest as unknown as Record<string, unknown>, 'CONOCER_MAS');
+  async function followCta() {
+    if (!latest || !revealed || followingCta.current) return;
+    followingCta.current = true;
+    setCtaBusy(true);
+    try {
+      const result = await followNotificationCta(latest as unknown as Record<string, unknown>);
+      await refreshEvents();
+      if (result && !result.stored) setHistoryError('La interacción continúa, pero no pudimos guardar todo su seguimiento local.');
+      else if (result && !result.navigated) setHistoryError('No pudimos abrir el destino de la notificación.');
+    } finally {
+      followingCta.current = false;
+      if (mounted.current) setCtaBusy(false);
+    }
   }
 
   function clearHistory() {
@@ -316,7 +317,7 @@ export default function PushExperience() {
             )}
           </div>
 
-          {latest && latestDetails && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latestDetails.title}</h4><p>{latestDetails.body || 'Sin cuerpo de mensaje'}</p>{revealed && <><button className="secondary-button notification-cta" onClick={() => void learnMore()}>Conocer más <ArrowRight size={15} /></button>{latestDetails.image && <img key={latestDetails.image} className="message-image" src={latestDetails.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}<p>Message ID: {latest.messageId || 'No disponible'}</p><time dateTime={latestTimestamp}>{formatEventTime(latestTimestamp, receiptDiagnostics?.timezone)}</time><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
+          {latest && latestDetails && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latestDetails.title}</h4><p>{latestDetails.body || 'Sin cuerpo de mensaje'}</p>{revealed && <>{latestDetails.cta && <button className="secondary-button notification-cta" disabled={ctaBusy} onClick={() => void followCta()}>{latestDetails.cta.label} <ArrowUpRight size={15} /></button>}{latestDetails.image && <img key={latestDetails.image} className="message-image" src={latestDetails.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}<p>Message ID: {latest.messageId || 'No disponible'}</p><time dateTime={latestTimestamp}>{formatEventTime(latestTimestamp, receiptDiagnostics?.timezone)}</time><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
 
           {historyError && <p className="history-error" role="status">{historyError}</p>}
           {demoMode && <NotificationsHistory events={events} onOpen={message => void openHistoryMessage(message)} onRefresh={() => void refreshEvents()} onClear={clearHistory} />}
@@ -334,17 +335,13 @@ export default function PushExperience() {
             {!!receiptDiagnostics?.events.length && <ul className="tracking-events">
               {receiptDiagnostics.events.map(item => <li key={item.id}>
                 <strong>{item.eventType}</strong><span>{item.status === 'accepted' ? 'Aceptado' : item.status === 'sending' ? 'Enviando' : item.status === 'superseded' ? 'No enviado: estado avanzado' : item.status === 'error' ? 'Error' : 'Pendiente'}</span>
+                {item.accion && <small>Acción: {item.accion}</small>}
                 <small>Detectado: Sí · Enviado: {item.sent ? 'Sí' : 'No'} · Aceptado: {item.accepted ? 'Sí' : 'No'}</small>
                 <time dateTime={item.timestamp}>{formatEventTime(item.timestamp, item.timezone)} · {item.timezone}</time>
                 {item.timezoneWarning && <small>{item.timezoneWarning === 'stored' ? 'Zona horaria recuperada del dispositivo.' : item.timezoneWarning === 'legacy' ? 'Evento anterior sin zona horaria: se conserva UTC.' : 'Zona horaria no disponible al detectar el evento: se conserva UTC.'}</small>}
               </li>)}
             </ul>}
           </details>}
-
-          {showMore && <section id="conocer-mas" className="more-information" aria-labelledby="more-title">
-            <h2 id="more-title" ref={moreTitle} tabIndex={-1}>DANAconnect</h2>
-            <p>Comunicaciones que conectan contigo: avisos de operaciones, recordatorios y novedades directamente en tu dispositivo.</p>
-          </section>}
 
         </section>
 

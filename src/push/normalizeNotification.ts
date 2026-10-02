@@ -6,6 +6,26 @@ function firstText(...values: unknown[]) {
   return values.find((value): value is string => typeof value === 'string' && Boolean(value.trim()))?.trim();
 }
 
+export type NotificationCta = { label: string; action: string; url: string };
+
+function notificationCta(data: Record<string, unknown>): NotificationCta | undefined {
+  const label = firstText(data.cta_label);
+  const action = firstText(data.cta_action);
+  const destination = firstText(data.cta_url);
+  if (!label || !action || !destination || !/^https:\/\//i.test(destination) || /[\u0000-\u0020\u007f]/.test(destination)) return;
+  try {
+    const url = new URL(destination);
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return;
+    const sensitive = (key: string) => /^(pushref|eventauthtoken|token|accesstoken|authorization|credentials?)$/.test(key.toLowerCase().replace(/[_-]/g, ''));
+    for (const params of [url.searchParams, new URLSearchParams(url.hash.slice(1))]) {
+      if ([...params.keys()].some(sensitive)) return;
+    }
+    const pushRef = firstText(data.push_ref);
+    if (pushRef && decodeURIComponent(url.href).includes(pushRef)) return;
+    return { label, action, url: url.href };
+  } catch { /* Invalid or credential-bearing destinations never become actions. */ }
+}
+
 export function normalizeNotification(payload: unknown) {
   const root = record(payload);
   const notification = record(root.notification);
@@ -21,5 +41,5 @@ export function normalizeNotification(payload: unknown) {
       if (url.protocol === 'https:' && !url.username && !url.password) { image = url.href; break; }
     } catch { /* Ignore malformed image URLs without hiding the message. */ }
   }
-  return { title, body, image };
+  return { title, body, image, cta: notificationCta(data) };
 }

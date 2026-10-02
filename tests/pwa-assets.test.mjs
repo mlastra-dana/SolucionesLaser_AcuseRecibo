@@ -63,7 +63,7 @@ test('notification history groups real events and only marks opened after an act
 
 test('normalization uses the first nonempty valid DANA field and safe images without mutating payloads', async () => {
   const result = await build({ stdin: { contents: "import { normalizeNotification } from './src/push/normalizeNotification'; globalThis.normalize = normalizeNotification;", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife' });
-  const context = vm.createContext({ URL });
+  const context = vm.createContext({ URL, URLSearchParams });
   vm.runInContext(result.outputFiles[0].text, context);
   const payload = { messageId: 'firebase-real-id-fixture', notification: { title: '  ', body: '', image: 'https://example.com/notification.png' }, data: { Titulo: 'DANA PUSH', titulo: 'Segundo', title: 'Tercero', Mensaje: 'Hola Demo', mensaje: 'Segundo cuerpo', body: 'Tercer cuerpo', IMAGEN: 'https://example.com/dana.png' } };
   const original = JSON.stringify(payload);
@@ -80,4 +80,26 @@ test('normalization uses the first nonempty valid DANA field and safe images wit
   assert.equal(context.normalize(null).title, 'DANA Push Experience');
   assert.equal(context.normalize({ notification: { title: 44 } }).title, 'DANA Push Experience');
   assert.equal(context.normalize({ data: { IMAGEN: 'http://example.com/image.png' } }).image, undefined);
+});
+
+test('CTA normalization requires all dynamic fields, retains the payload and rejects unsafe destinations', async () => {
+  const result = await build({ stdin: { contents: "import { normalizeNotification } from './src/push/normalizeNotification'; globalThis.normalize = normalizeNotification;", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife' });
+  const context = vm.createContext({ URL, URLSearchParams });
+  vm.runInContext(result.outputFiles[0].text, context);
+  const payload = { messageId: 'real-id', notification: { body: 'Message body' }, data: { push_ref: 'PUSH-REAL', Titulo: 'DANA PUSH', IMAGEN: 'https://example.com/image.png', cta_label: '  Consultar póliza  ', cta_action: '  CONSULTAR_POLIZA  ', cta_url: 'https://insurer.example/poliza?campaign=demo', extra_parameter: 'retained' } };
+  const original = JSON.stringify(payload);
+  const normalized = context.normalize(payload);
+  assert.equal(normalized.cta.label, 'Consultar póliza');
+  assert.equal(normalized.cta.action, 'CONSULTAR_POLIZA');
+  assert.equal(normalized.cta.url, payload.data.cta_url);
+  assert.equal(normalized.body, payload.notification.body);
+  assert.equal(JSON.stringify(payload), original);
+  for (const key of ['cta_label', 'cta_action', 'cta_url']) {
+    for (const value of [undefined, '', '  ', 42]) assert.equal(context.normalize({ ...payload, data: { ...payload.data, [key]: value } }).cta, undefined);
+  }
+  for (const url of ['javascript:alert(1)', 'data:text/html,test', 'file:///tmp/file', 'http://example.com', '/relative', '//example.com', 'https:example.com', 'https://', 'https://user:pass@example.com', 'https://example.com/?eventAuthToken=secret', 'https://example.com/?PUSH_REF=PUSH-REAL', 'https://example.com/PUSH-REAL', 'https://example.com/#token=secret', 'https://example.com/with space']) {
+    assert.equal(context.normalize({ ...payload, data: { ...payload.data, cta_url: url } }).cta, undefined, url);
+  }
+  const htmlText = '<img src=x onerror=alert(1)>';
+  assert.equal(context.normalize({ ...payload, data: { ...payload.data, cta_label: htmlText } }).cta.label, htmlText);
 });

@@ -1,4 +1,5 @@
 import { captureDeviceTimezone, storedEventTimezone, type EventTimezone } from './eventTimezone';
+import { normalizeNotification } from './normalizeNotification';
 
 export type ReceiptAssociation = { pushRef: string; eventAuthToken: string; resultId?: string | number };
 type Association = ReceiptAssociation & { savedAt: string };
@@ -83,7 +84,11 @@ export async function queuePushReceipt(payload: Record<string, unknown>, timesta
 }
 
 export async function queuePushEvent(type: TrackingEventType, payload: Record<string, unknown>, timestamp = new Date().toISOString(), accion = '') {
-  if (!Object.prototype.hasOwnProperty.call(rank, type) || (type === 'PUSH_CLICKED' ? accion !== 'CONOCER_MAS' : accion !== '')) return;
+  if (!Object.prototype.hasOwnProperty.call(rank, type)) return;
+  if (type === 'PUSH_CLICKED') {
+    const cta = normalizeNotification(payload).cta;
+    if (!cta || accion !== cta.action) return;
+  } else if (accion !== '') return;
   const data = payload.data as Record<string, unknown> | undefined;
   const pushRef = typeof data?.push_ref === 'string' ? data.push_ref : '';
   const messageId = typeof payload.messageId === 'string' ? payload.messageId : '';

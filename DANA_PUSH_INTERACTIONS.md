@@ -5,10 +5,10 @@ El usuario confirma la recepcion real de fase 1 en Contact Manager, UID 19, con 
 ## Interacciones
 
 - `PUSH_OPENED`: toque real del cuerpo de la notificacion del sistema, apertura explicita desde el banner o desde Mis notificaciones. Mostrar, recibir o restaurar un mensaje no genera aperturas.
-- `PUSH_CLICKED`: solo seleccion de Conocer mas, con `accion=CONOCER_MAS`. Abrir el historial o tocar el cuerpo de la notificacion no genera clics.
-- El CTA aparece en el mensaje abierto y muestra una seccion informativa de la misma PWA. Tambien se incluye en notificaciones creadas por nuestro worker cuando Notification.maxActions permite botones; la alternativa dentro de la PWA no depende de ese soporte. Las notificaciones automaticas de Firebase no se reconstruyen ni se duplican.
-- En `notificationclick`, conserva data.push_ref y normaliza fcmMessageId a messageId para los payloads internos FCM. Una accion CONOCER_MAS directa registra apertura y clic; una pulsacion del cuerpo registra solo apertura. [Distincion de action en notificationclick](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerGlobalScope/notificationclick_event).
-- `event.waitUntil` mantiene el guardado/reporte activo incluso sin React. Navegacion y reporte corren independientemente: un fallo de red no bloquea foco o apertura. Se reutiliza una ventana del origen destino cuando existe; el CTA lleva a `/#conocer-mas`.
+- `PUSH_CLICKED`: solo seleccion de un CTA completo y valido del payload, con `accion=data.cta_action`. Abrir el historial o tocar el cuerpo de la notificacion no genera clics.
+- El CTA aparece en el mensaje abierto con `data.cta_label` y abre `data.cta_url` HTTPS. Sin los tres parametros validos no hay boton ni accion inventada. Tambien se incluye en notificaciones creadas por nuestro worker cuando Notification.maxActions permite botones; la alternativa dentro de la PWA no depende de ese soporte. Las notificaciones automaticas de Firebase no se reconstruyen ni se duplican.
+- En `notificationclick`, conserva data.push_ref y normaliza fcmMessageId a messageId para los payloads internos FCM. Una accion que coincide con el CTA valido registra apertura y clic; una pulsacion del cuerpo registra solo apertura. [Distincion de action en notificationclick](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerGlobalScope/notificationclick_event).
+- `event.waitUntil` mantiene el guardado/reporte activo incluso sin React. El CTA espera el guardado local, pero nunca la respuesta HTTP para navegar. Se reutiliza una ventana del origen destino cuando existe; el CTA lleva al destino HTTPS del payload. En React se reserva una ventana durante la activacion del usuario, se elimina opener y se navega tras guardar. Si el navegador bloquea esa ventana, se usa la pestaña actual despues del guardado.
 
 ## Persistencia y Contrato
 
@@ -16,7 +16,7 @@ Se mantienen version 1 y los stores existentes de dana-push-receipts: associatio
 
 Las claves nuevas son JSON de `[pushRef, messageId, eventType, accion]`. Cada evento conserva el primer timestamp UTC de su interaccion real. Reabrir o pulsar varias veces el mismo CTA no repite reportes; tipos distintos no se deduplican entre si. El historial visual sigue separado de la cola persistente.
 
-Los tres eventos envian exactamente las mismas ocho claves: action=event, push_ref, eventAuthToken, event, messageId, timestamp, timezone, accion. Apertura usa accion vacia; clic usa CONOCER_MAS. Nunca se envian campos de registro ni fechas anteriores vacias. El backend conserva su CSV dinamico por evento, por lo que estos POST no piden borrar PUSH_RECEIVED_AT ni PUSH_OPENED_AT.
+Los tres eventos envian exactamente las mismas ocho claves: action=event, push_ref, eventAuthToken, event, messageId, timestamp, timezone, accion. Apertura usa accion vacia; clic usa el identificador dinamico del CTA. Nunca se envian campos de registro ni fechas anteriores vacias. El backend conserva su CSV dinamico por evento, por lo que estos POST no piden borrar PUSH_RECEIVED_AT ni PUSH_OPENED_AT.
 
 Push Tracking V1: solo Lambda transforma event, timestamp y accion a PUSH_STATUS, PUSH_RECEIVED_AT, PUSH_OPENED_AT, PUSH_CLICKED_AT y PUSH_CLICK_ACTION. PUSH_REF y PUSH_MESSAGE_ID conservan sus nombres en Contact Manager. Estos codigos no sustituyen las propiedades del JSON del frontend ni requieren migrar IndexedDB o sus credenciales.
 
@@ -52,8 +52,20 @@ Despues de publicar y actualizar online la PWA:
 
 1. Registrar desde la PWA y recibir un Push. Confirmar la recepcion existente y su fecha.
 2. Tocar la notificacion del sistema o Abrir mensaje del historial. Confirmar PUSH_OPENED, accion vacia, mismo push_ref/messageId y fecha UTC de esa apertura.
-3. Elegir Conocer mas. Confirmar PUSH_CLICKED, accion CONOCER_MAS, misma referencia/ID y fecha UTC del clic.
-4. Esperar procesamiento de UPDALL y comprobar en la misma fila PUSH_RECEIVED_AT, PUSH_OPENED_AT, PUSH_CLICKED_AT, PUSH_CLICK_ACTION=CONOCER_MAS, PUSH_STATUS=PUSH_CLICKED y PUSH_MESSAGE_ID.
+3. Elegir el CTA del mensaje. Confirmar PUSH_CLICKED, accion igual a data.cta_action, misma referencia/ID, fecha UTC y zona del clic; el destino debe ser data.cta_url.
+4. Esperar procesamiento de UPDALL y comprobar en la misma fila PUSH_RECEIVED_AT, PUSH_OPENED_AT, PUSH_CLICKED_AT, PUSH_CLICK_ACTION igual a data.cta_action, PUSH_STATUS=PUSH_CLICKED y PUSH_MESSAGE_ID.
 5. Reabrir y repetir el CTA: no debe haber otro register ni otro reporte para esas claves. Probar app visible, segundo plano y red temporalmente perdida, sin provocar fallos deliberados en produccion.
 
 No se hizo deploy, AWS Lambda Test ni nueva prueba real de Contact Manager desde esta ampliacion.
+
+## Cierre V1: CTA Dinamico
+
+`normalizeNotification` valida conjuntamente cta_label, cta_action y cta_url. El texto se presenta mediante React, nunca como HTML. Solo admite URLs HTTPS absolutas, sin usuario/clave, parametros sensibles ni la referencia del mensaje en el destino. No agrega tokens o referencias a la navegacion. La normalizacion no modifica el payload completo conservado en el historial.
+
+`followNotificationCta` reserva la ventana durante el clic real y elimina opener. Conserva primero el clic en la cola IndexedDB y el historial, inicia el reporte y abre el destino sin esperar HTTP. Si la ventana esta bloqueada usa la pestaña actual; si falla el almacenamiento se advierte sin bloquear la navegacion. La cola conserva credenciales por referencia, timestamp UTC, timezone y accion dinamica. Deduplicacion y reintentos existentes siguen intactos, incluso para eventos historicos pendientes sin parametros CTA en su payload original. No se cambian versiones o stores ni se borra informacion.
+
+El Worker sustituye solamente el boton/accion fijos por el CTA valido del payload. El clic del cuerpo conserva PUSH_OPENED; el boton nativo opcional registra PUSH_OPENED y PUSH_CLICKED con la accion del payload. El CTA dentro de la PWA no requiere soporte de botones nativos. Recepcion, Firebase automatico, iconos, imagenes y configuracion de instalacion se mantienen.
+
+Validacion del cierre: `npm run build` correcto y 75 pruebas aprobadas. Chromium con IndexedDB real y HTTP simulado verifico etiquetas/destinos CONOCER_MAS y CONSULTAR_POLIZA, apertura sin clic, falta de CTA y URL insegura sin boton, navegacion sin opener, fallo 503, persistencia tras recarga, deduplicacion y reintento a los 30 segundos con timestamp/timezone originales. Vistas 320, 390 y 1440 px sin desbordamiento. El build local carece de URL Lambda; la URL ficticia se sustituyo solo en la respuesta JS del navegador aislado, sin modificar archivos de configuracion, variables de entorno o el build publicado. No se registro ningun contacto real ni se invoco Lambda.
+
+Pendiente de aceptacion real despues del despliegue: probar Chrome y la PWA instalada en iPhone con Push Parameters completos; comprobar en la misma fila PUSH_STATUS=PUSH_CLICKED, PUSH_CLICK_ACTION igual a cta_action y PUSH_CLICKED_AT local AM/PM, preservando PUSH_RECEIVED_AT, PUSH_OPENED_AT y PUSH_MESSAGE_ID. HTTP 202 confirma aceptacion del trabajo, no su procesamiento final.

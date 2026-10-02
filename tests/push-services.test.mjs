@@ -50,7 +50,7 @@ async function fixture(worker = false, overrides = {}) {
   });
   const notification = { permission: 'default', requestPermission: async () => { h.requested++; notification.permission = h.permissionResult; return h.permissionResult; } };
   const context = vm.createContext({
-    h, console, setTimeout, clearTimeout, URL, AbortController, indexedDB: new IDBFactory(), crypto: webcrypto,
+    h, console, setTimeout, clearTimeout, URL, URLSearchParams, AbortController, indexedDB: new IDBFactory(), crypto: webcrypto,
     fetch: async (url, options) => { h.requests.push({ url, options }); if (h.fetchHandler) return h.fetchHandler(url, options); return h.response; },
     Notification: notification,
     window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout, matchMedia: () => ({ matches: h.standalone }) },
@@ -526,7 +526,7 @@ test('onBackgroundMessage preserves receipt reporting and body interaction repor
     assert.equal(h.notices.length, 1);
     return { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
   };
-  const payload = { messageId: 'background-fcm-id', data: { push_ref: 'PUSH-background-fixture', Titulo: 'DANA PUSH' } };
+  const payload = { messageId: 'background-fcm-id', data: { push_ref: 'PUSH-background-fixture', Titulo: 'DANA PUSH', cta_label: 'Consultar póliza', cta_action: 'CONSULTAR_POLIZA', cta_url: 'https://insurer.example/poliza' } };
   await h.background(payload);
   await h.background(payload);
   assert.equal(h.requests.length, 1);
@@ -537,6 +537,7 @@ test('onBackgroundMessage preserves receipt reporting and body interaction repor
   assert.equal(h.requests.length, 2);
   assert.equal(JSON.parse(h.requests[1].options.body).event, 'PUSH_OPENED');
   assert.equal(JSON.parse(h.requests[1].options.body).accion, '');
+  assert.equal(h.events[0].payload.data.cta_action, 'CONSULTAR_POLIZA');
 });
 
 async function seedWorkerAssociation(context, pushRef) {
@@ -561,15 +562,15 @@ test('system CTA reports opened then clicked, normalizes original FCM identifier
   h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
   const click = async () => {
     let completed;
-    h.listeners.notificationclick({ action: 'CONOCER_MAS', notification: { data: { FCM_MSG: { fcmMessageId: 'system-action-id', data: { push_ref: 'PUSH-system-action' } } }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+    h.listeners.notificationclick({ action: 'CONSULTAR_POLIZA', notification: { data: { FCM_MSG: { fcmMessageId: 'system-action-id', data: { push_ref: 'PUSH-system-action', cta_label: 'Consultar póliza', cta_action: 'CONSULTAR_POLIZA', cta_url: 'https://demo.example/poliza' } } }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
     await completed;
   };
   await click();
   await click();
   assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_OPENED', 'PUSH_CLICKED']);
-  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).accion), ['', 'CONOCER_MAS']);
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).accion), ['', 'CONSULTAR_POLIZA']);
   assert.equal(JSON.parse(h.requests[1].options.body).messageId, 'system-action-id');
-  assert.equal(navigated, 'https://demo.example/#conocer-mas');
+  assert.equal(navigated, 'https://demo.example/poliza');
   assert.equal(focused, 2);
   assert.equal(h.openedUrl, undefined);
 });
@@ -592,11 +593,29 @@ test('system body navigation completes while event network is stalled and failed
 test('system action button is optional and never required to display on platforms without action support', async () => {
   const supported = await fixture(true);
   supported.context.Notification.maxActions = 2;
-  await supported.h.background({ messageId: 'with-action', data: { Titulo: 'DANA PUSH' } });
-  assert.equal(supported.h.notices[0][1].actions[0].action, 'CONOCER_MAS');
+  const data = { Titulo: 'DANA PUSH', cta_label: 'Consultar póliza', cta_action: 'CONSULTAR_POLIZA', cta_url: 'https://destination.example/poliza' };
+  await supported.h.background({ messageId: 'with-action', data });
+  assert.equal(supported.h.notices[0][1].actions[0].action, 'CONSULTAR_POLIZA');
+  assert.equal(supported.h.notices[0][1].actions[0].title, 'Consultar póliza');
   const fallback = await fixture(true);
   fallback.context.Notification.maxActions = 0;
-  await fallback.h.background({ messageId: 'without-action', data: { Titulo: 'DANA PUSH' } });
+  await fallback.h.background({ messageId: 'without-action', data });
   assert.equal(fallback.h.notices.length, 1);
   assert.equal(fallback.h.notices[0][1].actions, undefined);
+  await supported.h.background({ messageId: 'no-cta', data: { Titulo: 'DANA PUSH' } });
+  assert.equal(supported.h.notices[1][1].actions, undefined);
+});
+
+test('invalid or unrelated native CTA actions preserve opening without clicked or unsafe navigation', async () => {
+  for (const cta_url of ['javascript:alert(1)', 'https://destination.example/safe']) {
+    const { h, context } = await fixture(true, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+    await seedWorkerAssociation(context, 'PUSH-invalid-action');
+    h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+    const payload = { messageId: 'invalid-action-id', data: { push_ref: 'PUSH-invalid-action', cta_label: 'Consultar póliza', cta_action: 'CONSULTAR_POLIZA', cta_url } };
+    let completed;
+    h.listeners.notificationclick({ action: 'OTHER_ACTION', notification: { data: { danaPayload: payload }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+    await completed;
+    assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_OPENED']);
+    assert.equal(h.openedUrl, 'https://demo.example/');
+  }
 });

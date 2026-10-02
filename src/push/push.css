@@ -73,8 +73,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; backgroun
 .tracking-events { list-style: none; padding: 0; }
 .tracking-events li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; border-top: 1px solid #e1e6ed; padding: 12px 0; }
 .tracking-events li > span { max-width: 120px; text-align: right; overflow-wrap: anywhere; }
-.tracking-events small, .tracking-events time { grid-column: 1 / -1; font-size: 11px; }
-.notification-cta { margin-top: 12px; min-height: 44px; }
+.tracking-events small, .tracking-events time { grid-column: 1 / -1; font-size: 11px; overflow-wrap: anywhere; }
+.notification-cta { margin-top: 12px; min-height: 44px; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.notification-cta svg { flex-shrink: 0; }
 .more-information { max-width: 600px; margin: 24px auto 0; border-top: 1px solid #e1e6ed; padding-top: 20px; }
 .more-information h2 { font-size: 18px; }
 .more-information p { font-size: 13px; line-height: 1.7; }

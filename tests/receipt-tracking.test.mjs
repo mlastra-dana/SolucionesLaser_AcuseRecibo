@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 
 const endpoint = 'https://lambda.example/register';
 const compiled = await build({
-  stdin: { contents: "import * as tracking from './src/push/receiptTracking'; import * as dana from './src/services/danaService'; import * as timezones from './src/push/eventTimezone'; globalThis.tracking = tracking; globalThis.dana = dana; globalThis.timezones = timezones;", resolveDir: process.cwd(), loader: 'ts' },
+  stdin: { contents: "import * as tracking from './src/push/receiptTracking'; import * as dana from './src/services/danaService'; import * as timezones from './src/push/eventTimezone'; import { followNotificationCta } from './src/push/followNotificationCta'; import { readPushEvents } from './src/push/eventStore'; globalThis.tracking = tracking; globalThis.dana = dana; globalThis.timezones = timezones; globalThis.followCta = followNotificationCta; globalThis.readEvents = readPushEvents;", resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'iife', platform: 'browser',
   define: { 'import.meta.env': JSON.stringify({ VITE_DANA_PUSH_API_URL: endpoint }) }
 });
@@ -27,14 +27,14 @@ function fixture(indexedDB = new IDBFactory()) {
     }
     return new Intl.DateTimeFormat(locale, options);
   }
-  const context = vm.createContext({ indexedDB, Intl: { DateTimeFormat }, Date: Clock, crypto: webcrypto, URL, AbortController, setTimeout, clearTimeout,
+  const context = vm.createContext({ indexedDB, Intl: { DateTimeFormat }, Date: Clock, crypto: webcrypto, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
     fetch: async (url, options) => { requests.push({ url, body: JSON.parse(options.body), options }); return h.fetch ? h.fetch(url, options) : h.response; }
   });
   vm.runInContext(compiled.outputFiles[0].text, context);
   return { ...context, context, requests, h, advance: ms => { now += ms; } };
 }
 const association = (pushRef = 'PUSH-A', token = 'private-fixture-auth') => ({ pushRef, eventAuthToken: token, resultId: 91 });
-const payload = (pushRef = 'PUSH-A', messageId = 'firebase-message-1') => ({ messageId, data: { push_ref: pushRef, Titulo: 'DANA PUSH' } });
+const payload = (pushRef = 'PUSH-A', messageId = 'firebase-message-1') => ({ messageId, data: { push_ref: pushRef, Titulo: 'DANA PUSH', cta_label: 'Conocer más', cta_action: 'CONOCER_MAS', cta_url: 'https://destination.example/' } });
 
 test('receipt before register waits for matching persisted association and preserves receipt timestamp', async () => {
   const f = fixture();
@@ -461,4 +461,83 @@ test('a rejected terminal advanced event is not treated as an accepted state adv
   f.h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
   await f.tracking.flushPushReceipts();
   assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_OPENED', 'PUSH_RECEIVED']);
+});
+
+test('dynamic CTA reserves its window synchronously, persists before navigation and never waits for HTTP', async () => {
+  const f = fixture();
+  const message = payload();
+  Object.assign(message.data, { cta_label: 'Consultar póliza', cta_action: 'CONSULTAR_POLIZA', cta_url: 'https://insurer.example/poliza?source=push' });
+  await f.tracking.saveReceiptAssociation(association());
+  let opened = 0, navigated, release;
+  const destination = { opener: 'original', closed: false, location: { replace(url) { navigated = url; } } };
+  f.context.window = { open(url, target) { assert.equal(url, 'about:blank'); assert.equal(target, '_blank'); opened++; return destination; } };
+  f.h.fetch = () => new Promise(resolve => { release = resolve; });
+  const click = f.followCta(message);
+  assert.equal(opened, 1);
+  assert.equal(destination.opener, null);
+  assert.equal(navigated, undefined);
+  const result = await click;
+  assert.equal(result.stored, true);
+  assert.equal(result.navigated, true);
+  assert.equal(navigated, message.data.cta_url);
+  const stored = (await f.tracking.getReceiptDiagnostics()).events[0];
+  assert.equal(stored.eventType, 'PUSH_CLICKED');
+  assert.equal(stored.accion, 'CONSULTAR_POLIZA');
+  assert.equal(stored.timestamp, '2026-10-02T12:00:00.000Z');
+  assert.equal(stored.timezone, 'America/Caracas');
+  const history = await f.readEvents();
+  assert.equal(history[0].payload.data.cta_url, message.data.cta_url);
+  assert.equal(history[0].payload.data.push_ref, 'PUSH-A');
+  for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(f.requests[0].body.accion, 'CONSULTAR_POLIZA');
+  assert.equal(f.requests[0].body.event, 'PUSH_CLICKED');
+  assert.equal(f.requests[0].body.eventAuthToken, 'private-fixture-auth');
+  release({ status: 503 });
+  for (let i = 0; i < 100 && (await f.tracking.getReceiptDiagnostics()).status !== 'error'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal((await f.tracking.getReceiptDiagnostics()).pending, 1);
+  f.advance(30_001);
+  f.h.fetch = undefined;
+  await f.tracking.flushPushReceipts();
+  await f.followCta(message);
+  assert.equal(f.requests.length, 2);
+  assert.deepEqual(f.requests[1].body, f.requests[0].body);
+  assert.equal((await f.readEvents()).length, 1);
+});
+
+test('blocked popup navigates in the current tab only after the click has been persisted', async () => {
+  const f = fixture();
+  let navigated;
+  f.context.window = { open: () => null, location: { assign(url) { navigated = url; } } };
+  const promise = f.followCta(payload());
+  assert.equal(navigated, undefined);
+  const result = await promise;
+  assert.equal(result.stored, true);
+  assert.equal(navigated, 'https://destination.example/');
+  assert.equal((await f.tracking.getReceiptDiagnostics()).pending, 1);
+  assert.equal(f.requests.length, 0);
+});
+
+test('missing CTA and mismatched actions never invent clicks; reception and opening keep their contract', async () => {
+  const f = fixture();
+  const message = { messageId: 'no-cta', data: { push_ref: 'PUSH-A' } };
+  await f.tracking.saveReceiptAssociation(association());
+  assert.equal(await f.followCta(message), undefined);
+  await f.tracking.queuePushEvent('PUSH_CLICKED', message, undefined, 'CONOCER_MAS');
+  await f.tracking.queuePushEvent('PUSH_CLICKED', payload(), undefined, 'OTHER_ACTION');
+  await f.tracking.queuePushReceipt(message);
+  await f.tracking.queuePushEvent('PUSH_OPENED', message);
+  await f.tracking.flushPushReceipts();
+  assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED']);
+  assert.ok(f.requests.every(item => item.body.accion === '' && !('PUSH_RECEIVED_AT' in item.body) && !('PUSH_OPENED_AT' in item.body)));
+});
+
+test('tracking storage failure does not block navigation or claim acceptance', async () => {
+  const f = fixture({ open() { throw new Error('Storage unavailable'); } });
+  let navigated;
+  f.context.window = { open: () => null, location: { assign(url) { navigated = url; } } };
+  const result = await f.followCta(payload());
+  assert.equal(result.stored, false);
+  assert.equal(result.navigated, true);
+  assert.equal(navigated, 'https://destination.example/');
+  assert.equal(f.requests.length, 0);
 });

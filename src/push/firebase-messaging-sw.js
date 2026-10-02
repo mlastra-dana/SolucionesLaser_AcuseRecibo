@@ -43,8 +43,8 @@ async function showObservedNotification(payload) {
       icon: payload.notification?.icon || payload.data?.icon || '/pwa/icon-192.png',
       ...(details.image ? { image: details.image } : {}),
       tag: messageId,
-      ...(typeof Notification !== 'undefined' && Notification.maxActions > 0
-        ? { actions: [{ action: 'CONOCER_MAS', title: 'Conocer más' }] } : {}),
+      ...(details.cta && typeof Notification !== 'undefined' && Notification.maxActions > 0
+        ? { actions: [{ action: details.cta.action, title: details.cta.label }] } : {}),
       data: { danaPayload: payload }
     });
   } catch (error) {
@@ -87,21 +87,23 @@ self.addEventListener('notificationclick', event => {
   event.stopImmediatePropagation();
   event.notification.close();
   const timestamp = new Date().toISOString();
-  const cta = event.action === 'CONOCER_MAS';
+  const details = normalizeNotification(payload);
+  const cta = details.cta && event.action === details.cta.action ? details.cta : undefined;
   const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
   event.waitUntil((async () => {
-    const reporting = (async () => {
+    const persistence = (async () => {
       await queuePushEvent('PUSH_OPENED', normalized, timestamp).catch(() => {});
       await track('PUSH_OPENED', normalized, timestamp).catch(() => {});
       if (cta) {
-        await queuePushEvent('PUSH_CLICKED', normalized, timestamp, 'CONOCER_MAS').catch(() => {});
-        await track('PUSH_CLICKED', normalized, timestamp, 'CONOCER_MAS').catch(() => {});
+        await queuePushEvent('PUSH_CLICKED', normalized, timestamp, cta.action).catch(() => {});
+        await track('PUSH_CLICKED', normalized, timestamp, cta.action).catch(() => {});
       }
-      await flushPushReceipts().catch(() => {});
     })();
+    const reporting = persistence.then(() => flushPushReceipts().catch(() => {}));
     const navigation = (async () => {
+      if (cta) await persistence;
       const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-      const target = cta ? self.location.origin + '/#conocer-mas' : notificationUrl(payload);
+      const target = cta ? cta.url : notificationUrl(payload);
       const client = clients.find(item => new URL(item.url).origin === new URL(target).origin);
       if (client) {
         try { if (client.url !== target && client.navigate) await client.navigate(target); }
