@@ -81,8 +81,25 @@ test('FCM registration uses permission, explicit worker and VAPID, with no DANA 
   assert.equal(received.length, 1);
   registration.unsubscribe();
   assert.equal(h.unsubscribeCount, 1);
-  const result = await context.dana.registerPushVisitor({ nombre: 'Maria', apellido: 'Lastra', token: registration.token, source: 'DANA_PUSH_EXPERIENCE' });
+  const result = await context.dana.registerPushVisitor({ nombre: 'Maria Lastra', email: 'maria@example.com', telefono: '+58 412 123 4567', token: registration.token, source: 'DANA_PUSH_EXPERIENCE' });
   assert.equal(result.status, 'pending');
+});
+
+test('visitor details use one full name plus email and telephone, without external calls', async () => {
+  const { context } = await fixture();
+  const details = { nombre: '  Demo Nombre Completo  ', email: '  demo@example.com  ', telefono: '+58 (412) 123-4567' };
+  assert.equal(context.dana.validateVisitorDetails(details), null);
+  for (const [field, value] of [
+    ['nombre', ''], ['nombre', 'a'.repeat(121)],
+    ['email', ''], ['email', 'demo'], ['email', 'demo @example.com'],
+    ['telefono', ''], ['telefono', '123'], ['telefono', 'abc1234567'],
+    ['telefono', '+1234567890123456']
+  ]) {
+    const invalid = { ...details, [field]: value };
+    assert.equal(context.dana.validateVisitorDetails(invalid).field, field);
+    await assert.rejects(context.dana.registerPushVisitor({ ...invalid, token: 'test' }));
+  }
+  await assert.rejects(context.dana.registerPushVisitor({ ...details, token: '' }), /token FCM/);
 });
 
 test('missing Firebase configuration never prompts permission', async () => {
@@ -174,10 +191,10 @@ test('failed local tracking does not suppress data-only notifications', async ()
 
 test('future DANA URL still cannot initiate a conversation in phase 1', async () => {
   const { context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
-  const result = await context.dana.registerPushVisitor({ nombre: 'A', apellido: 'B', token: 'test', source: 'DANA_PUSH_EXPERIENCE' });
+  const result = await context.dana.registerPushVisitor({ nombre: 'A B', email: 'demo@example.com', telefono: '+58 412 123 4567', token: 'test', source: 'DANA_PUSH_EXPERIENCE' });
   assert.equal(result.status, 'pending');
   assert.equal(result.endpointConfigured, true);
-  await assert.rejects(context.dana.registerPushVisitor({ nombre: '', apellido: 'B', token: 'test' }), /requiere/);
+  await assert.rejects(context.dana.registerPushVisitor({ nombre: '', email: 'demo@example.com', telefono: '+58 412 123 4567', token: 'test' }), /nombre completo/);
 });
 
 test('already granted browsers reconnect foreground reception without permission or token requests', async () => {

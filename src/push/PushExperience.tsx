@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowRight, Bell, BellRing, Check, CheckCircle2, ChevronDown, Clipboard, Code2, Info, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Trash2, UserRound, X } from 'lucide-react';
+import { ArrowRight, Bell, BellRing, Check, CheckCircle2, ChevronDown, Clipboard, Code2, Info, LoaderCircle, LockKeyhole, RefreshCw, Trash2, UserRound, X } from 'lucide-react';
 import type { MessagePayload } from 'firebase/messaging';
 import { getPushDiagnostics, listenForPushMessages, registerPushBrowser, type PushDiagnostics } from '../services/pushService';
-import { registerPushVisitor, type PushVisitor } from '../services/danaService';
+import { registerPushVisitor, validateVisitorDetails, type PushVisitor } from '../services/danaService';
 import { clearPushEvents, getMessageDetails, readPushEvents, recordPushEvent, type ObservedNotification, type PushEvent } from './eventStore';
 import { getFirebaseConfig } from './firebaseConfig';
 import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } from '../services/pushCapabilities';
@@ -16,10 +16,12 @@ export default function PushExperience() {
   const pwa = usePwa();
   const [capabilities, setCapabilities] = useState<PushCapabilities | null>(null);
   const [nombre, setNombre] = useState('');
-  const [apellido, setApellido] = useState('');
+  const [email, setEmail] = useState('');
+  const [telefono, setTelefono] = useState('');
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [invalidField, setInvalidField] = useState<'nombre' | 'email' | 'telefono' | null>(null);
   const [visitor, setVisitor] = useState<PushVisitor | null>(null);
   const [events, setEvents] = useState<PushEvent[]>([]);
   const [historyError, setHistoryError] = useState('');
@@ -112,7 +114,15 @@ export default function PushExperience() {
     event.preventDefault();
     if (busy) return;
     setError('');
-    if (!nombre.trim() || !apellido.trim()) { setError('Introduce tu nombre y apellido para continuar.'); return; }
+    setInvalidField(null);
+    const details = { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() };
+    const invalid = validateVisitorDetails(details);
+    if (invalid) {
+      setInvalidField(invalid.field);
+      setError(invalid.message);
+      document.getElementById(invalid.field)?.focus();
+      return;
+    }
     if (!consent) { setError('Acepta recibir una notificación de prueba para continuar.'); return; }
     if (!pwa.online) { setError('Conéctate a Internet para registrar el navegador y generar tu token.'); return; }
     setBusy(true);
@@ -123,7 +133,7 @@ export default function PushExperience() {
       const result = await registerPushBrowser(receivePayload, capabilities ?? undefined);
       if (!mounted.current) { result.unsubscribe(); return; }
       stop.current = result.unsubscribe;
-      const registered = { nombre: nombre.trim(), apellido: apellido.trim(), token: result.token };
+      const registered = { ...details, token: result.token };
       await registerPushVisitor(registered);
       setVisitor(registered);
     } catch (cause) {
@@ -146,7 +156,8 @@ export default function PushExperience() {
     listenerGeneration.current++;
     stop.current?.();
     stop.current = null;
-    setVisitor(null); setNombre(''); setApellido(''); setConsent(false);
+    setVisitor(null); setNombre(''); setEmail(''); setTelefono(''); setConsent(false);
+    setInvalidField(null);
     setError(''); setLatest(null); setCopied(false); setCopyError('');
     setLatestTimestamp('');
     window.setTimeout(() => nameInput.current?.focus(), 0);
@@ -213,15 +224,15 @@ export default function PushExperience() {
                 <div className="panel-heading"><span className="panel-icon"><UserRound size={20} /></span><div><h2>Tu experiencia comienza aquí</h2><p>Prepara tu navegador para tu primera notificación.</p></div></div>
                 <fieldset disabled={busy}>
                   <div className="name-fields">
-                    <label htmlFor="nombre">Nombre <span aria-hidden="true">*</span><input ref={nameInput} id="nombre" name="nombre" autoComplete="given-name" maxLength={80} required value={nombre} onChange={event => setNombre(event.target.value)} placeholder="Tu nombre" aria-invalid={Boolean(error && !nombre.trim())} /></label>
-                    <label htmlFor="apellido">Apellido <span aria-hidden="true">*</span><input id="apellido" name="apellido" autoComplete="family-name" maxLength={80} required value={apellido} onChange={event => setApellido(event.target.value)} placeholder="Tu apellido" aria-invalid={Boolean(error && !apellido.trim())} /></label>
+                    <label className="full-width-field" htmlFor="nombre">Nombre completo <span aria-hidden="true">*</span><input ref={nameInput} id="nombre" name="nombre" autoComplete="name" maxLength={120} required value={nombre} onChange={event => setNombre(event.target.value)} placeholder="Tu nombre completo" aria-invalid={invalidField === 'nombre'} aria-describedby={invalidField === 'nombre' ? 'registration-error' : undefined} /></label>
+                    <label htmlFor="email">Email <span aria-hidden="true">*</span><input id="email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} required value={email} onChange={event => setEmail(event.target.value)} placeholder="nombre@empresa.com" aria-invalid={invalidField === 'email'} aria-describedby={invalidField === 'email' ? 'registration-error' : undefined} /></label>
+                    <label htmlFor="telefono">Teléfono <span aria-hidden="true">*</span><input id="telefono" name="telefono" type="tel" autoComplete="tel" maxLength={40} required value={telefono} onChange={event => setTelefono(event.target.value)} placeholder="+58 412 123 4567" aria-invalid={invalidField === 'telefono'} aria-describedby={invalidField === 'telefono' ? 'registration-error' : undefined} /></label>
                   </div>
                   <label className="consent" htmlFor="consent"><input id="consent" type="checkbox" required checked={consent} onChange={event => setConsent(event.target.checked)} /><span>Acepto recibir una notificación de prueba en este navegador</span></label>
-                  {error && <div className="error-message" role="alert"><Info size={18} /><span>{error}</span></div>}
+                  {error && <div id="registration-error" className="error-message" role="alert"><Info size={18} /><span>{error}</span></div>}
                   <button className="primary-button" type="submit" disabled={busy || !capabilities}>{busy ? <LoaderCircle className="spin" size={19} /> : <Bell size={19} />}<span>{busy ? 'Preparando tu navegador…' : 'Registrarme y recibir mi Push'}</span>{!busy && <ArrowRight size={19} />}</button>
                 </fieldset>
                 <p className="privacy-note"><LockKeyhole size={13} /> Tus datos se usan únicamente para esta demostración.</p>
-                <p className="phase-note"><Info size={14} /><span>Validación Firebase. El envío automático desde DANA estará disponible en la siguiente fase.</span></p>
               </form>
             ) : (
               <div className="success-panel">
@@ -235,7 +246,6 @@ export default function PushExperience() {
               </div>
             )}
           </div>
-          <div className="trust-line"><ShieldCheck size={16} /><span>Con tu permiso.</span><span className="trust-divider" /> Sin contraseñas.<span className="trust-divider" /> Directo a tu navegador.</div>
 
           {latest && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latest.notification?.title || latest.data?.title || 'Sin título'}</h4><p>{latest.notification?.body || latest.data?.body || 'Sin cuerpo de mensaje'}</p>{revealed && <><p>Message ID: {latest.messageId || 'No disponible'}</p><p>{latestTimestamp}</p><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
 

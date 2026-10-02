@@ -31,7 +31,7 @@ Crea `.env.local` a partir de los nombres en `.env.example` o configúralos para
 | `VITE_DANA_PUSH_API_URL` | Reservada para la futura Lambda; no se llama en fase 1 |
 | `VITE_PUSH_DEMO_MODE` | `true` para diagnóstico; `false` para ocultarlo |
 
-Se valida la configuración antes de pedir permiso. Nombre y apellido son obligatorios, con máximo de 80 caracteres. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento. No existe un token simulado ni un envío automático.
+Se validan los datos y la configuración antes de pedir permiso. El formulario usa un único nombre completo (máximo de 120 caracteres), email y teléfono obligatorios. El teléfono acepta formato internacional y separadores habituales, con 7 a 15 dígitos; esta comprobación de formato no verifica la titularidad ni la existencia del contacto. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento. No existe un token simulado ni un envío automático. Los datos de contacto se mantienen únicamente en memoria y no se envían ni se guardan en el historial local.
 
 ## AWS Amplify
 
@@ -47,10 +47,10 @@ Si la API key pública tiene restricciones de origen, habilita el nuevo origen H
 
 ## Obtener un token y probar el primer Push
 
-1. Abre la URL HTTPS en Chrome (o localhost en desarrollo), introduce nombre y apellido, acepta el consentimiento y pulsa **Registrarme y recibir mi Push**.
+1. Abre la URL HTTPS en Chrome (o localhost en desarrollo), introduce nombre completo, email y teléfono, acepta el consentimiento y pulsa **Registrarme y recibir mi Push**.
 2. Selecciona **Permitir**. Si el permiso está bloqueado, abre los controles del sitio junto a la dirección, habilita Notificaciones y recarga. Si cierras el diálogo, se muestra un mensaje y puedes reintentar.
 3. La confirmación aparece únicamente después de que `getToken()` devuelva un token no vacío. Esto confirma el registro local en FCM; no prueba todavía un envío desde DANA.
-4. Abre **Información de diagnóstico** y copia el token. Confirma Project ID `dana-push-demo-vzla`, App ID `1:981375663254:web:45bf8b65ddc6f1835b96b7`, permiso `granted`, worker `activated` y alcance de la raíz del origen. El token completo solo se muestra en ese desplegable. Nombre, apellido y token se mantienen solo en estado React. Firebase gestiona sus propios datos de suscripción en el navegador; la app no persiste el visitante ni copia su token en bases públicas.
+4. Abre **Información de diagnóstico** y copia el token. Confirma Project ID `dana-push-demo-vzla`, App ID `1:981375663254:web:45bf8b65ddc6f1835b96b7`, permiso `granted`, worker `activated` y alcance de la raíz del origen. El token completo solo se muestra en ese desplegable. Nombre completo, email, teléfono y token se mantienen solo en estado React. Firebase gestiona sus propios datos de suscripción en el navegador; la app no persiste el visitante ni copia su token en bases públicas.
 5. Usa tu integración DANA existente y el nodo PUSH con Application ID **DANA-PUSH-Demo**. Pega el token en **UFID** y configura título/cuerpo personalizados para la conversación de prueba. No se crean endpoints ni credenciales ni se llama DANA desde el frontend.
 6. Con la pestaña visible, verifica el banner y `PUSH_RECEIVED` en primer plano. El banner solo aparece para un mensaje real. **Abrir mensaje** captura la interacción y muestra el payload.
 7. Envía otra prueba con la pestaña en segundo plano. Firebase muestra automáticamente mensajes con `notification`. Para mensajes solo `data`, el worker muestra una notificación usando `data.title` y `data.body`. No se vuelve a mostrar manualmente un payload con `notification`.
