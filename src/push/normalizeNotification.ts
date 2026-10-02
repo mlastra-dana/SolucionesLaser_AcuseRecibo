@@ -1,3 +1,5 @@
+import { trackingFields } from './pushPayload';
+
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
@@ -20,7 +22,7 @@ function notificationCta(data: Record<string, unknown>): NotificationCta | undef
     for (const params of [url.searchParams, new URLSearchParams(url.hash.slice(1))]) {
       if ([...params.keys()].some(sensitive)) return;
     }
-    const pushRef = firstText(data.push_ref);
+    const pushRef = trackingFields({ data }).pushRef;
     if (pushRef && decodeURIComponent(url.href).includes(pushRef)) return;
     return { label, action, url: url.href };
   } catch { /* Invalid or credential-bearing destinations never become actions. */ }

@@ -627,7 +627,7 @@ test('already subscribed foreground browser receives V2 without registration and
   let observed;
   await context.api.listenForPushMessages(payload => { observed = payload; });
   h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
-  await h.foreground({ messageId: 'v2-foreground-id', data: { push_ref: 'PUSH-v2-foreground', event_auth_token: 'signed-v2-fg-fixture', Titulo: 'DANA PUSH V2' } });
+  await h.foreground({ messageId: 'v2-foreground-id', data: { PUSH_REF: 'PUSH-v2-foreground', EVENT_AUTH_TOKEN: 'signed-v2-fg-fixture', Titulo: 'DANA PUSH V2' } });
   for (let i = 0; i < 100 && !h.requests.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(h.requests.length, 1);
   assert.equal(h.requests[0].url, url);
@@ -645,7 +645,7 @@ test('background V2 persists credentials for all interactions without registrati
   h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
   const messages = [];
   h.clients = [{ url: 'https://demo.example/', postMessage(message) { messages.push(message); }, async focus() {} }];
-  const payload = { messageId: 'v2-background-id', data: { push_ref: 'PUSH-v2-background', event_auth_token: 'signed-v2-bg-fixture', Titulo: 'DANA PUSH V2', IMAGEN: 'https://image.example/push.png', cta_label: 'Explorar novedades', cta_action: 'EXPLORAR_NOVEDADES', cta_url: 'https://destination.example/news' } };
+  const payload = { messageId: 'v2-background-id', data: { pushRef: 'PUSH-v2-background', eventAuthToken: 'signed-v2-bg-fixture', Titulo: 'DANA PUSH V2', IMAGEN: 'https://image.example/push.png', cta_label: 'Explorar novedades', cta_action: 'EXPLORAR_NOVEDADES', cta_url: 'https://destination.example/news' } };
   await h.background(payload);
   await h.background(payload);
   assert.equal(h.requests.length, 1);

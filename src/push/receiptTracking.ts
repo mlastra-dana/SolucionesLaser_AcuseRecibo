@@ -1,6 +1,6 @@
 import { captureDeviceTimezone, storedEventTimezone, type EventTimezone } from './eventTimezone';
 import { normalizeNotification } from './normalizeNotification';
-import { getTrackingVersion, type TrackingVersion } from './pushPayload';
+import { getTrackingVersion, trackingFields, type TrackingVersion } from './pushPayload';
 
 export type ReceiptAssociation = { pushRef: string; eventAuthToken: string; resultId?: string | number };
 type Association = ReceiptAssociation & { savedAt: string; version?: TrackingVersion; reference?: string; messageId?: string };
@@ -11,13 +11,15 @@ type Receipt = {
   eventType?: TrackingEventType; accion?: string; timezone?: string; timezoneWarning?: EventTimezone['timezoneWarning'];
   status: 'pending' | 'sending' | 'accepted' | 'error' | 'superseded'; attempts: number; retryAt: number;
   lastAttemptAt?: string; acceptedAt?: string;
+  httpStatus?: number;
   terminal: boolean; leaseUntil: number; owner?: string;
 };
 export type ReceiptDiagnostics = {
   timezone: string; timezoneWarning?: EventTimezone['timezoneWarning'];
   associated: boolean; lastEvent: TrackingEventType | null;
   status: Receipt['status'] | null; pending: number;
-  events: ({ id: string; version: TrackingVersion; eventType: TrackingEventType; messageId: string; timestamp: string; status: Receipt['status']; sent: boolean; accepted: boolean; accion: string } & EventTimezone)[];
+  v2EndpointConfigured: boolean;
+  events: ({ id: string; version: TrackingVersion; eventType: TrackingEventType; messageId: string; timestamp: string; status: Receipt['status']; sent: boolean; accepted: boolean; accion: string; httpStatus?: number; issue?: string } & EventTimezone)[];
 };
 
 const rank = { PUSH_RECEIVED: 0, PUSH_OPENED: 1, PUSH_CLICKED: 2 };
@@ -35,6 +37,11 @@ function eventEndpoint(trackingVersion: TrackingVersion): URL | undefined {
     const url = new URL(trackingVersion === 'v2' ? import.meta.env.VITE_DANA_PUSH_V2_API_URL : import.meta.env.VITE_DANA_PUSH_API_URL);
     if (url.protocol === 'https:' && !url.username && !url.password) return url;
   } catch { /* Never send V2 to V1 when its endpoint is unavailable. */ }
+}
+
+// Log only explicit booleans and protocol state; never payloads, credentials or server bodies.
+function reportDiagnostic(event: TrackingEventType, fields: Record<string, string | number | boolean>) {
+  console.info('[DANA Push Tracking]', { event, ...fields });
 }
 
 // Credentials stay in associations, outside the clearable visual history and diagnostics.
@@ -101,12 +108,14 @@ export async function queuePushEvent(type: TrackingEventType, payload: Record<st
     const cta = normalizeNotification(payload).cta;
     if (!cta || accion !== cta.action) return;
   } else if (accion !== '') return;
-  const data = payload.data as Record<string, unknown> | undefined;
-  const pushRef = typeof data?.push_ref === 'string' ? data.push_ref : '';
-  const messageId = typeof payload.messageId === 'string' ? payload.messageId : '';
-  if (!pushRef.trim() || !messageId.trim()) return;
   const trackingVersion = getTrackingVersion(payload);
-  const signedToken = typeof data?.event_auth_token === 'string' && data.event_auth_token.trim() ? data.event_auth_token : undefined;
+  const { pushRef, eventAuthToken: signedToken } = trackingFields(payload);
+  const messageId = typeof payload.messageId === 'string' ? payload.messageId : typeof payload.fcmMessageId === 'string' ? payload.fcmMessageId : '';
+  reportDiagnostic(type, { version: trackingVersion, v2Detected: trackingVersion === 'v2', endpointConfigured: Boolean(eventEndpoint(trackingVersion)), pushRefDetected: Boolean(pushRef.trim()), credentialDetected: Boolean(signedToken) || payload.danaCredentialDetected === true, messageIdDetected: Boolean(messageId.trim()) });
+  if (!pushRef.trim() || !messageId.trim()) {
+    reportDiagnostic(type, { version: trackingVersion, error: 'Falta PUSH_REF o messageId; el evento no puede correlacionarse.' });
+    return;
+  }
   const timezone = await captureDeviceTimezone();
   const id = JSON.stringify(trackingVersion === 'v2' ? ['v2', pushRef, messageId, type, accion] : [pushRef, messageId, type, accion]);
   let conflict = false;
@@ -154,7 +163,10 @@ async function claimReceipt(id: string) {
       const credentials = tx.objectStore('associations').get(associationKey(receipt));
       credentials.onsuccess = () => {
         const association = credentials.result as Association | undefined;
-        if (!association) return;
+        if (!association) {
+          reportDiagnostic(eventType(receipt), { version: version(receipt), error: 'Credencial de correlacion ausente; evento pendiente.' });
+          return;
+        }
         const claimed: Receipt = { ...receipt, ...storedEventTimezone(receipt), status: 'sending', lastAttemptAt: new Date().toISOString(), owner: crypto.randomUUID(), leaseUntil: now + 45_000, attempts: receipt.attempts + 1 };
         store.put(claimed);
         result({ receipt: claimed, association });
@@ -163,7 +175,7 @@ async function claimReceipt(id: string) {
   });
 }
 
-async function finishReceipt(receipt: Receipt, accepted: boolean, terminal: boolean) {
+async function finishReceipt(receipt: Receipt, accepted: boolean, terminal: boolean, httpStatus?: number) {
   await transaction<void>('readwrite', (tx, result) => {
     const store = tx.objectStore('receipts');
     const request = store.get(receipt.id);
@@ -171,6 +183,7 @@ async function finishReceipt(receipt: Receipt, accepted: boolean, terminal: bool
       const current = request.result as Receipt;
       if (current?.owner === receipt.owner) store.put({
         ...current, status: accepted ? 'accepted' : 'error', terminal, leaseUntil: 0, owner: undefined,
+        httpStatus,
         acceptedAt: accepted ? new Date().toISOString() : undefined,
         retryAt: accepted || terminal ? 0 : Date.now() + Math.min(900_000, 30_000 * 2 ** Math.min(current.attempts - 1, 5))
       });
@@ -187,13 +200,18 @@ export async function flushPushReceipts() {
   // One bounded pass, never a retry loop. Later availability signals resume eligible receipts.
   for (const item of receipts.sort((a, b) => rank[eventType(a)] - rank[eventType(b)] || a.timestamp.localeCompare(b.timestamp))) {
     const endpoint = eventEndpoint(version(item));
-    if (!endpoint) continue;
+    if (!endpoint) {
+      if (outstanding(item)) reportDiagnostic(eventType(item), { version: version(item), endpointConfigured: false, error: 'Endpoint ausente o invalido; evento conservado pendiente.' });
+      continue;
+    }
     const claimed = await claimReceipt(item.id);
     if (!claimed) continue;
     const { receipt, association } = claimed;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     let accepted = false, terminal = false;
+    let httpStatus: number | undefined;
+    reportDiagnostic(eventType(receipt), { version: version(receipt), attempting: true });
     try {
       const response = await fetch(endpoint.href, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -201,6 +219,7 @@ export async function flushPushReceipts() {
         body: JSON.stringify({ action: 'event', push_ref: receipt.pushRef, eventAuthToken: association.eventAuthToken,
           event: eventType(receipt), messageId: receipt.messageId, timestamp: receipt.timestamp, timezone: receipt.timezone, accion: receipt.accion ?? '' })
       });
+      httpStatus = response.status;
       terminal = response.status >= 400 && response.status < 500 && ![408, 429].includes(response.status);
       if (response.status === 202) {
         const body = await response.json();
@@ -208,7 +227,8 @@ export async function flushPushReceipts() {
       }
     } catch { /* Keep only sanitized state, never server responses or authorization tokens. */ }
     finally { clearTimeout(timer); }
-    await finishReceipt(receipt, accepted, terminal);
+    reportDiagnostic(eventType(receipt), { version: version(receipt), httpStatus: httpStatus ?? 'sin respuesta', accepted, terminal });
+    await finishReceipt(receipt, accepted, terminal, httpStatus);
   }
 }
 
@@ -216,15 +236,17 @@ export async function getReceiptDiagnostics(): Promise<ReceiptDiagnostics> {
   const timezone = await captureDeviceTimezone();
   return transaction<ReceiptDiagnostics>('readonly', (tx, result) => {
     let associated = false;
-    const associations = tx.objectStore('associations').count();
-    associations.onsuccess = () => { associated = associations.result > 0; };
+    let references: string[] = [];
+    const associations = tx.objectStore('associations').getAllKeys();
+    associations.onsuccess = () => { references = associations.result as string[]; associated = references.length > 0; };
     const receipts = tx.objectStore('receipts').getAll();
     receipts.onsuccess = () => {
       const items = (receipts.result as Receipt[]).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      result({ ...timezone, associated, lastEvent: items[0] ? eventType(items[0]) : null,
+      result({ ...timezone, associated, v2EndpointConfigured: Boolean(eventEndpoint('v2')), lastEvent: items[0] ? eventType(items[0]) : null,
         status: items[0]?.status ?? null, pending: items.filter(outstanding).length,
         events: items.slice(0, 20).map(item => ({ ...storedEventTimezone(item), id: item.id, version: version(item), eventType: eventType(item), messageId: item.messageId, timestamp: item.timestamp,
-          status: item.status, sent: item.attempts > 0, accepted: item.status === 'accepted', accion: item.accion ?? '' })) });
+          status: item.status, sent: item.attempts > 0, accepted: item.status === 'accepted', accion: item.accion ?? '', httpStatus: item.httpStatus,
+          issue: outstanding(item) ? !eventEndpoint(version(item)) ? 'Endpoint ausente o invalido: evento pendiente.' : !references.includes(associationKey(item)) ? 'Credencial de correlacion ausente: evento pendiente.' : item.status === 'error' ? 'Solicitud no aceptada; reintento controlado.' : undefined : item.status === 'error' ? 'Solicitud rechazada; sin reintento automatico.' : undefined })) });
     };
   });
 }

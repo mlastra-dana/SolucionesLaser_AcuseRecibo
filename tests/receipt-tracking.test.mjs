@@ -17,6 +17,7 @@ const compiled = await compile();
 function fixture(indexedDB = new IDBFactory(), script = compiled.outputFiles[0].text) {
   let now = Date.parse('2026-10-02T12:00:00.000Z');
   const requests = [];
+  const logs = [];
   const h = { timezone: 'America/Caracas', timezoneFailure: false, response: { status: 202, json: async () => ({ success: true, uploadAccepted: true }) } };
   class Clock extends Date {
     constructor(...args) { super(...(args.length ? args : [now])); }
@@ -29,11 +30,11 @@ function fixture(indexedDB = new IDBFactory(), script = compiled.outputFiles[0].
     }
     return new Intl.DateTimeFormat(locale, options);
   }
-  const context = vm.createContext({ indexedDB, Intl: { DateTimeFormat }, Date: Clock, crypto: webcrypto, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
+  const context = vm.createContext({ indexedDB, console: { info: (...args) => logs.push(args) }, Intl: { DateTimeFormat }, Date: Clock, crypto: webcrypto, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
     fetch: async (url, options) => { requests.push({ url, body: JSON.parse(options.body), options }); return h.fetch ? h.fetch(url, options) : h.response; }
   });
   vm.runInContext(script, context);
-  return { ...context, context, requests, h, advance: ms => { now += ms; } };
+  return { ...context, context, requests, logs, h, advance: ms => { now += ms; } };
 }
 const association = (pushRef = 'PUSH-A', token = 'private-fixture-auth') => ({ pushRef, eventAuthToken: token, resultId: 91 });
 const payload = (pushRef = 'PUSH-A', messageId = 'firebase-message-1') => ({ messageId, data: { push_ref: pushRef, Titulo: 'DANA PUSH', cta_label: 'Conocer más', cta_action: 'CONOCER_MAS', cta_url: 'https://destination.example/' } });
@@ -667,6 +668,10 @@ test('missing or insecure V2 endpoint leaves V2 pending without blocking V1 or r
     assert.equal(f.requests.length, 1);
     assert.equal(f.requests[0].url, endpoint);
     assert.equal((await f.tracking.getReceiptDiagnostics()).pending, 1);
+    const diagnostics = await f.tracking.getReceiptDiagnostics();
+    assert.equal(diagnostics.v2EndpointConfigured, false);
+    assert.match(diagnostics.events.find(item => item.version === 'v2').issue, /Endpoint/);
+    assert.ok(f.logs.some(([, item]) => item.version === 'v2' && item.endpointConfigured === false));
     assert.equal(await f.tracking.nextReceiptAttempt(), null);
   }
 });
@@ -682,6 +687,7 @@ test('V2 operates when the V1 URL is unset and forbidden responses remain termin
   assert.equal(f.requests.length, 1);
   assert.equal(f.requests[0].url, endpointV2);
   assert.equal((await f.tracking.getReceiptDiagnostics()).status, 'error');
+  assert.equal((await f.tracking.getReceiptDiagnostics()).events[0].httpStatus, 403);
   assert.equal(await f.tracking.nextReceiptAttempt(), null);
 });
 
@@ -696,4 +702,49 @@ test('V2 pending receipt recovers its matching credential without replacing the 
   assert.equal(f.requests[0].url, endpointV2);
   assert.equal(f.requests[0].body.timestamp, '2026-10-02T12:00:00.000Z');
   assert.equal(f.requests[0].body.eventAuthToken, 'signed-v2-fixture-token');
+});
+
+for (const refKey of ['push_ref', 'PUSH_REF', 'pushRef']) {
+  for (const tokenKey of ['event_auth_token', 'EVENT_AUTH_TOKEN', 'eventAuthToken']) {
+    test(`V2 normalizes ${refKey}/${tokenKey} and reports all stages after history restoration`, async () => {
+      const db = new IDBFactory(), f = fixture(db);
+      const message = payloadV2();
+      delete message.data.push_ref;
+      delete message.data.event_auth_token;
+      message.data[refKey] = 'PUSH-ALIASED';
+      message.data[tokenKey] = 'signed-alias-fixture';
+      await f.tracking.queuePushReceipt(message);
+      await f.recordEvent('PUSH_RECEIVED', 'foreground', message);
+      await f.tracking.flushPushReceipts();
+      const safe = (await f.readEvents())[0].payload;
+      assert.equal(safe.danaTrackingVersion, 'v2');
+      assert.equal(safe.danaCredentialDetected, true);
+      assert.equal(safe.data.push_ref, 'PUSH-ALIASED');
+      assert.equal(JSON.stringify(safe).includes('signed-alias-fixture'), false);
+      const restored = fixture(db);
+      await restored.tracking.queuePushEvent('PUSH_OPENED', safe);
+      await restored.tracking.queuePushEvent('PUSH_CLICKED', safe, undefined, 'EXPLORAR_NOVEDADES');
+      await restored.tracking.flushPushReceipts();
+      await restored.tracking.queuePushEvent('PUSH_CLICKED', safe, undefined, 'EXPLORAR_NOVEDADES');
+      await restored.tracking.flushPushReceipts();
+      const requests = [...f.requests, ...restored.requests];
+      assert.deepEqual(requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED', 'PUSH_CLICKED']);
+      assert.ok(requests.every(item => item.url === endpointV2 && item.body.push_ref === 'PUSH-ALIASED' && item.body.eventAuthToken === 'signed-alias-fixture'));
+      assert.ok(requests.every(item => Object.keys(item.body).length === 8));
+      const diagnostics = await restored.tracking.getReceiptDiagnostics();
+      assert.ok(diagnostics.events.every(item => item.httpStatus === 202));
+      assert.equal(JSON.stringify([...f.logs, ...restored.logs, diagnostics]).includes('signed-alias-fixture'), false);
+    });
+  }
+}
+
+test('incomplete V2 explains missing correlation without posting or leaking its signed credential', async () => {
+  const f = fixture();
+  const message = { messageId: 'missing-ref', data: { EVENT_AUTH_TOKEN: 'secret-missing-ref' } };
+  await f.tracking.queuePushReceipt(message);
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 0);
+  assert.ok(f.logs.some(([, item]) => item.v2Detected === true && item.pushRefDetected === false && item.credentialDetected === true));
+  assert.ok(f.logs.some(([, item]) => item.error?.includes('PUSH_REF')));
+  assert.equal(JSON.stringify(f.logs).includes('secret-missing-ref'), false);
 });

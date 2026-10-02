@@ -1,5 +1,5 @@
 import { normalizeNotification } from './normalizeNotification';
-import { getTrackingVersion, safePushPayload } from './pushPayload';
+import { getTrackingVersion, safePushPayload, trackingFields } from './pushPayload';
 
 export type PushEventType = 'PUSH_RECEIVED' | 'PUSH_OPENED' | 'PUSH_CLICKED';
 export type PushEvent = {
@@ -27,7 +27,7 @@ export type ObservedNotification = {
 export function getNotificationHistory(events: PushEvent[]): ObservedNotification[] {
   const messages = new Map<string, ObservedNotification>();
   for (const event of [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp))) {
-    const id = getTrackingVersion(event.payload) === 'v2' ? JSON.stringify(['v2', (event.payload.data as Record<string, unknown>)?.push_ref, event.messageId || event.id]) : event.messageId || event.id;
+    const id = getTrackingVersion(event.payload) === 'v2' ? JSON.stringify(['v2', trackingFields(event.payload).pushRef, event.messageId || event.id]) : event.messageId || event.id;
     const previous = messages.get(id);
     const details = getMessageDetails(event.payload);
     messages.set(id, {
@@ -64,9 +64,9 @@ export async function readPushEvents(): Promise<PushEvent[]> {
 }
 
 export async function recordPushEvent(type: PushEventType, context: PushEvent['context'], payload: Record<string, unknown>, timestamp = new Date().toISOString(), accion = ''): Promise<PushEvent> {
-  const messageId = typeof payload.messageId === 'string' ? payload.messageId : undefined;
+  const messageId = typeof payload.messageId === 'string' ? payload.messageId : typeof payload.fcmMessageId === 'string' ? payload.fcmMessageId : undefined;
   const event: PushEvent = {
-    id: getTrackingVersion(payload) === 'v2' && messageId ? JSON.stringify(['v2', (payload.data as Record<string, unknown>)?.push_ref, messageId, type, accion]) : messageId ? `${type}:${messageId}${accion ? `:${accion}` : ''}` : crypto.randomUUID(),
+    id: getTrackingVersion(payload) === 'v2' && messageId ? JSON.stringify(['v2', trackingFields(payload).pushRef, messageId, type, accion]) : messageId ? `${type}:${messageId}${accion ? `:${accion}` : ''}` : crypto.randomUUID(),
     type, context, messageId, timestamp, accion, ...getMessageDetails(payload), payload: safePushPayload(payload)
   };
   const db = await openDatabase();

@@ -11,13 +11,14 @@ import NotificationsHistory from './NotificationsHistory';
 import { flushPushReceipts, getReceiptDiagnostics, nextReceiptAttempt, queuePushEvent, type ReceiptDiagnostics } from './receiptTracking';
 import { formatEventTime } from './eventTimezone';
 import { followNotificationCta } from './followNotificationCta';
-import { safePushPayload } from './pushPayload';
+import { getTrackingVersion, safePushPayload, trackingFields } from './pushPayload';
 
 const demoMode = import.meta.env.VITE_PUSH_DEMO_MODE !== 'false';
 type RegistrationStage = 'Validando información' | 'Conectando con Firebase' | 'Registrando dispositivo' | 'Enviando información a DANAconnect' | 'Preparando notificación' | 'Registro completado';
 
 export default function PushExperience() {
   const pwa = usePwa();
+  const [view, setView] = useState<'notifications' | 'register'>('notifications');
   const [capabilities, setCapabilities] = useState<PushCapabilities | null>(null);
   const [nombre, setNombre] = useState('');
   const [email, setEmail] = useState('');
@@ -61,6 +62,7 @@ export default function PushExperience() {
         setLatestTimestamp(clicked.timestamp);
         setMessageContext('background');
         setRevealed(true);
+        setView('notifications');
       }
     }
     catch { setHistoryError('El historial local no está disponible en este navegador. La recepción Push puede continuar.'); }
@@ -127,6 +129,7 @@ export default function PushExperience() {
     setLatestTimestamp(new Date().toISOString());
     setMessageContext('foreground');
     setRevealed(false);
+    setView('notifications');
     void refreshEvents();
   }, []);
 
@@ -225,6 +228,7 @@ export default function PushExperience() {
   }
 
   async function openHistoryMessage(message: ObservedNotification) {
+    setView('notifications');
     setLatest(message.payload as unknown as MessagePayload);
     setLatestTimestamp(message.timestamp);
     setMessageContext(message.context);
@@ -265,6 +269,8 @@ export default function PushExperience() {
   }
 
   const latestDetails = latest ? getMessageDetails(latest as unknown as Record<string, unknown>) : null;
+  const diagnosticPayload = latest as unknown as Record<string, unknown> | null ?? events[0]?.payload;
+  const diagnosticFields = diagnosticPayload ? trackingFields(diagnosticPayload) : null;
 
   return (
     <div className="push-app">
@@ -277,17 +283,19 @@ export default function PushExperience() {
         <section className="experience-section" aria-labelledby="experience-title">
           <div className="experience-masthead">
           <div className="intro">
-            <div className="hero-bell"><Bell size={27} strokeWidth={1.7} aria-hidden="true" /></div>
-            <p className="eyebrow">CONEXIONES QUE LLEGAN AL INSTANTE</p>
-            <h1 id="experience-title">¡Experimenta el poder de las <span>notificaciones Push!</span></h1>
-            <p className="intro-description">Descubre cómo DANAconnect permite conectar con tus clientes mediante notificaciones instantáneas, directamente en sus dispositivos.</p>
+            <h1 id="experience-title">DANA Push Experience</h1>
           </div>
 
           <InstallExperience pwa={pwa} />
           {capabilities && !capabilities.supported && <p className="push-compatibility-note" role="status"><Info size={16} />{pushUnavailableMessage(capabilities.reason)}</p>}
           </div>
 
-          <div className="registration-panel">
+          <nav className="push-navigation" aria-label="Navegación principal">
+            <button className="secondary-button" aria-current={view === 'notifications' ? 'page' : undefined} onClick={() => setView('notifications')}><Bell size={17} />Mis notificaciones</button>
+            <button className="secondary-button" aria-current={view === 'register' ? 'page' : undefined} onClick={() => setView('register')}><UserRound size={17} />Registrar dispositivo</button>
+          </nav>
+
+          {view === 'register' && <div className="registration-panel">
             {!visitor ? (
               <form onSubmit={submit} noValidate aria-busy={busy}>
                 <div className="panel-heading"><span className="panel-icon"><UserRound size={20} /></span><div><h2>Tu experiencia comienza aquí</h2><p>Prepara tu navegador para tu primera notificación.</p></div></div>
@@ -316,16 +324,20 @@ export default function PushExperience() {
                 {busy && <p className="registration-progress" role="status">Enviando información a DANAconnect…</p>}
               </div>
             )}
-          </div>
+          </div>}
 
-          {latest && latestDetails && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latestDetails.title}</h4><p>{latestDetails.body || 'Sin cuerpo de mensaje'}</p>{revealed && <>{latestDetails.cta && <button className="secondary-button notification-cta" disabled={ctaBusy} onClick={() => void followCta()}>{latestDetails.cta.label} <ArrowUpRight size={15} /></button>}{latestDetails.image && <img key={latestDetails.image} className="message-image" src={latestDetails.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}<p>Message ID: {latest.messageId || 'No disponible'}</p><time dateTime={latestTimestamp}>{formatEventTime(latestTimestamp, receiptDiagnostics?.timezone)}</time><pre>{JSON.stringify(safePushPayload(latest as unknown as Record<string, unknown>), null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
+          {view === 'notifications' && latest && latestDetails && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latestDetails.title}</h4><p>{latestDetails.body || 'Sin cuerpo de mensaje'}</p>{revealed && <>{latestDetails.cta && <button className="secondary-button notification-cta" disabled={ctaBusy} onClick={() => void followCta()}>{latestDetails.cta.label} <ArrowUpRight size={15} /></button>}{latestDetails.image && <img key={latestDetails.image} className="message-image" src={latestDetails.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}<time dateTime={latestTimestamp}>{formatEventTime(latestTimestamp, receiptDiagnostics?.timezone)}</time></>}</div>{!revealed && <button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button>}<button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
 
           {historyError && <p className="history-error" role="status">{historyError}</p>}
-          {demoMode && <NotificationsHistory events={events} onOpen={message => void openHistoryMessage(message)} onRefresh={() => void refreshEvents()} onClear={clearHistory} />}
+          {view === 'notifications' && <NotificationsHistory events={events} onOpen={message => void openHistoryMessage(message)} onRefresh={() => void refreshEvents()} onClear={clearHistory} />}
 
           {demoMode && <details className="receipt-diagnostics">
             <summary>Información de diagnóstico</summary>
             <dl>
+              <dt>V2 detectada</dt><dd>{diagnosticPayload && getTrackingVersion(diagnosticPayload) === 'v2' ? 'Sí' : 'No'}</dd>
+              <dt>Endpoint V2</dt><dd>{receiptDiagnostics?.v2EndpointConfigured ? 'Configurado' : 'Ausente o inválido'}</dd>
+              <dt>PUSH_REF detectado</dt><dd>{diagnosticFields?.pushRef ? 'Sí' : 'No'}</dd>
+              <dt>EVENT_AUTH_TOKEN detectado</dt><dd>{diagnosticPayload?.danaCredentialDetected === true ? 'Sí' : 'No'}</dd>
               <dt>PushRef asociado</dt><dd>{receiptDiagnostics?.associated ? 'Sí' : 'No'}</dd>
               <dt>Último evento</dt><dd>{receiptDiagnostics?.lastEvent ?? '—'}</dd>
               <dt>Envío a Lambda</dt><dd>{receiptStorageError ? 'error' : receiptDiagnostics?.status === 'accepted' ? 'aceptado' : receiptDiagnostics?.status === 'sending' ? 'enviando' : receiptDiagnostics?.status === 'superseded' ? 'no enviado: estado avanzado' : receiptDiagnostics?.status === 'error' ? 'error' : receiptDiagnostics?.status === 'pending' ? 'pendiente' : '—'}</dd>
@@ -338,6 +350,8 @@ export default function PushExperience() {
                 <strong>{item.eventType}</strong><span>{item.status === 'accepted' ? 'Aceptado' : item.status === 'sending' ? 'Enviando' : item.status === 'superseded' ? 'No enviado: estado avanzado' : item.status === 'error' ? 'Error' : 'Pendiente'}</span>
                 {item.accion && <small>Acción: {item.accion}</small>}
                 <small>Tracking: {item.version.toUpperCase()}</small>
+                <small>HTTP: {item.httpStatus ?? 'Sin respuesta'}</small>
+                {item.issue && <small role="status">{item.issue}</small>}
                 <small>Detectado: Sí · Enviado: {item.sent ? 'Sí' : 'No'} · Aceptado: {item.accepted ? 'Sí' : 'No'}</small>
                 <time dateTime={item.timestamp}>{formatEventTime(item.timestamp, item.timezone)} · {item.timezone}</time>
                 {item.timezoneWarning && <small>{item.timezoneWarning === 'stored' ? 'Zona horaria recuperada del dispositivo.' : item.timezoneWarning === 'legacy' ? 'Evento anterior sin zona horaria: se conserva UTC.' : 'Zona horaria no disponible al detectar el evento: se conserva UTC.'}</small>}
