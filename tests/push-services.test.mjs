@@ -619,3 +619,52 @@ test('invalid or unrelated native CTA actions preserve opening without clicked o
     assert.equal(h.openedUrl, 'https://demo.example/');
   }
 });
+
+test('already subscribed foreground browser receives V2 without registration and redacts the UI callback', async () => {
+  const url = 'https://v2.example/event';
+  const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://v1.example/register', VITE_DANA_PUSH_V2_API_URL: url });
+  context.Notification.permission = 'granted';
+  let observed;
+  await context.api.listenForPushMessages(payload => { observed = payload; });
+  h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  await h.foreground({ messageId: 'v2-foreground-id', data: { push_ref: 'PUSH-v2-foreground', event_auth_token: 'signed-v2-fg-fixture', Titulo: 'DANA PUSH V2' } });
+  for (let i = 0; i < 100 && !h.requests.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].url, url);
+  assert.equal(JSON.parse(h.requests[0].options.body).event, 'PUSH_RECEIVED');
+  assert.equal(JSON.parse(h.requests[0].options.body).eventAuthToken, 'signed-v2-fg-fixture');
+  assert.equal(observed.data.event_auth_token, undefined);
+  assert.equal(observed.danaTrackingVersion, 'v2');
+  assert.equal(h.options, undefined);
+  assert.equal(h.requested, 0);
+});
+
+test('background V2 persists credentials for all interactions without registration or exposing worker messages', async () => {
+  const url = 'https://v2.example/event';
+  const { h, context } = await fixture(true, { VITE_DANA_PUSH_V2_API_URL: url });
+  h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  const messages = [];
+  h.clients = [{ url: 'https://demo.example/', postMessage(message) { messages.push(message); }, async focus() {} }];
+  const payload = { messageId: 'v2-background-id', data: { push_ref: 'PUSH-v2-background', event_auth_token: 'signed-v2-bg-fixture', Titulo: 'DANA PUSH V2', IMAGEN: 'https://image.example/push.png', cta_label: 'Explorar novedades', cta_action: 'EXPLORAR_NOVEDADES', cta_url: 'https://destination.example/news' } };
+  await h.background(payload);
+  await h.background(payload);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.notices[0][1].image, payload.data.IMAGEN);
+  const click = async action => {
+    let completed;
+    h.listeners.notificationclick({ action, notification: { data: { FCM_MSG: { ...payload, messageId: undefined, fcmMessageId: payload.messageId } }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+    await completed;
+  };
+  await click('');
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_RECEIVED', 'PUSH_OPENED']);
+  await click('EXPLORAR_NOVEDADES');
+  await click('EXPLORAR_NOVEDADES');
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_RECEIVED', 'PUSH_OPENED', 'PUSH_CLICKED']);
+  assert.ok(h.requests.every(item => item.url === url));
+  assert.equal(JSON.parse(h.requests[2].options.body).accion, 'EXPLORAR_NOVEDADES');
+  assert.equal(JSON.parse(h.requests[2].options.body).messageId, payload.messageId);
+  assert.equal(h.openedUrl, payload.data.cta_url);
+  assert.equal(JSON.stringify(messages).includes('signed-v2-bg-fixture'), false);
+  assert.equal(messages[0].payload.danaTrackingVersion, 'v2');
+});

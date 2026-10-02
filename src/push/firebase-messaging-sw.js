@@ -3,6 +3,7 @@ import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
 import { getFirebaseConfig } from './firebaseConfig';
 import { recordPushEvent } from './eventStore';
 import { normalizeNotification } from './normalizeNotification';
+import { safePushPayload } from './pushPayload';
 import { queuePushReceipt, queuePushEvent, flushPushReceipts } from './receiptTracking';
 import { setCacheNameDetails } from 'workbox-core';
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
@@ -68,7 +69,7 @@ async function track(type, payload, timestamp, accion = '') {
   const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
   try { await recordPushEvent(type, 'background', normalized, timestamp, accion); } catch { /* Tracking must not prevent a notification. */ }
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-  clients.forEach(client => client.postMessage({ source: 'DANA_PUSH_WORKER', type, payload: normalized }));
+  clients.forEach(client => client.postMessage({ source: 'DANA_PUSH_WORKER', type, payload: safePushPayload(normalized) }));
 }
 
 function notificationUrl(payload) {

@@ -103,3 +103,23 @@ test('CTA normalization requires all dynamic fields, retains the payload and rej
   const htmlText = '<img src=x onerror=alert(1)>';
   assert.equal(context.normalize({ ...payload, data: { ...payload.data, cta_label: htmlText } }).cta.label, htmlText);
 });
+
+test('sanitized V2 payloads preserve routing, custom data and version-separated history without credentials', async () => {
+  const result = await build({ stdin: { contents: "import { safePushPayload, getTrackingVersion } from './src/push/pushPayload'; import { getNotificationHistory } from './src/push/eventStore'; globalThis.safe = safePushPayload; globalThis.version = getTrackingVersion; globalThis.history = getNotificationHistory;", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife' });
+  const context = vm.createContext({ URL, URLSearchParams });
+  vm.runInContext(result.outputFiles[0].text, context);
+  const v1 = { messageId: 'shared-id', data: { push_ref: 'PUSH-shared', Titulo: 'V1' } };
+  const v2 = { messageId: 'shared-id', data: { push_ref: 'PUSH-shared', Titulo: 'V2', event_auth_token: 'signed-fixture', cta_label: 'Explorar novedades', cta_action: 'EXPLORAR_NOVEDADES', cta_url: 'https://destination.example/news' }, nested: [{ eventAuthToken: 'nested-secret', keep: 'custom' }] };
+  const original = JSON.stringify(v2);
+  const safe = context.safe(v2);
+  assert.equal(context.version(v1), 'v1');
+  assert.equal(context.version(v2), 'v2');
+  assert.equal(context.version(safe), 'v2');
+  assert.equal(safe.data.cta_action, 'EXPLORAR_NOVEDADES');
+  assert.equal(safe.nested[0].keep, 'custom');
+  assert.equal(JSON.stringify(safe).includes('signed-fixture'), false);
+  assert.equal(JSON.stringify(safe).includes('nested-secret'), false);
+  assert.equal(JSON.stringify(v2), original);
+  const event = { type: 'PUSH_RECEIVED', context: 'background', timestamp: '2026-10-02T12:00:00Z', messageId: 'shared-id' };
+  assert.equal(context.history([{ ...event, id: 'v1', payload: v1 }, { ...event, id: 'v2', payload: safe }]).length, 2);
+});

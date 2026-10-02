@@ -1,11 +1,13 @@
 import { captureDeviceTimezone, storedEventTimezone, type EventTimezone } from './eventTimezone';
 import { normalizeNotification } from './normalizeNotification';
+import { getTrackingVersion, type TrackingVersion } from './pushPayload';
 
 export type ReceiptAssociation = { pushRef: string; eventAuthToken: string; resultId?: string | number };
-type Association = ReceiptAssociation & { savedAt: string };
+type Association = ReceiptAssociation & { savedAt: string; version?: TrackingVersion; reference?: string; messageId?: string };
 export type TrackingEventType = 'PUSH_RECEIVED' | 'PUSH_OPENED' | 'PUSH_CLICKED';
 type Receipt = {
   id: string; pushRef: string; messageId: string; timestamp: string;
+  version?: TrackingVersion;
   eventType?: TrackingEventType; accion?: string; timezone?: string; timezoneWarning?: EventTimezone['timezoneWarning'];
   status: 'pending' | 'sending' | 'accepted' | 'error' | 'superseded'; attempts: number; retryAt: number;
   lastAttemptAt?: string; acceptedAt?: string;
@@ -15,17 +17,27 @@ export type ReceiptDiagnostics = {
   timezone: string; timezoneWarning?: EventTimezone['timezoneWarning'];
   associated: boolean; lastEvent: TrackingEventType | null;
   status: Receipt['status'] | null; pending: number;
-  events: ({ id: string; eventType: TrackingEventType; messageId: string; timestamp: string; status: Receipt['status']; sent: boolean; accepted: boolean; accion: string } & EventTimezone)[];
+  events: ({ id: string; version: TrackingVersion; eventType: TrackingEventType; messageId: string; timestamp: string; status: Receipt['status']; sent: boolean; accepted: boolean; accion: string } & EventTimezone)[];
 };
 
 const rank = { PUSH_RECEIVED: 0, PUSH_OPENED: 1, PUSH_CLICKED: 2 };
 const eventType = (item: Receipt) => item.eventType ?? 'PUSH_RECEIVED';
+const version = (item: Pick<Receipt, 'version'>) => item.version ?? 'v1';
+const associationKey = (item: Pick<Receipt, 'version' | 'pushRef' | 'messageId'>) => version(item) === 'v2' ? JSON.stringify(['v2', item.pushRef, item.messageId]) : item.pushRef;
+const sameReference = (a: Receipt, b: Receipt) => version(a) === version(b) && a.pushRef === b.pushRef && (version(a) === 'v1' || a.messageId === b.messageId);
 const outstanding = (item: Receipt) => item.status !== 'accepted' && !item.terminal;
-const advanced = (item: Receipt, all: Receipt[]) => all.some(other => other.pushRef === item.pushRef && rank[eventType(other)] > rank[eventType(item)] && (other.status === 'accepted' || (other.attempts > 0 && !other.terminal)));
-const blocked = (item: Receipt, all: Receipt[]) => all.some(other => other.id !== item.id && other.pushRef === item.pushRef &&
+const advanced = (item: Receipt, all: Receipt[]) => all.some(other => sameReference(other, item) && rank[eventType(other)] > rank[eventType(item)] && (other.status === 'accepted' || (other.attempts > 0 && !other.terminal)));
+const blocked = (item: Receipt, all: Receipt[]) => all.some(other => other.id !== item.id && sameReference(other, item) &&
   (other.leaseUntil > Date.now() || (outstanding(other) && rank[eventType(other)] < rank[eventType(item)])));
 
-// Separate from the clearable, capped visual history. Credentials never enter payloads or diagnostics.
+function eventEndpoint(trackingVersion: TrackingVersion): URL | undefined {
+  try {
+    const url = new URL(trackingVersion === 'v2' ? import.meta.env.VITE_DANA_PUSH_V2_API_URL : import.meta.env.VITE_DANA_PUSH_API_URL);
+    if (url.protocol === 'https:' && !url.username && !url.password) return url;
+  } catch { /* Never send V2 to V1 when its endpoint is unavailable. */ }
+}
+
+// Credentials stay in associations, outside the clearable visual history and diagnostics.
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open('dana-push-receipts', 1);
@@ -93,22 +105,38 @@ export async function queuePushEvent(type: TrackingEventType, payload: Record<st
   const pushRef = typeof data?.push_ref === 'string' ? data.push_ref : '';
   const messageId = typeof payload.messageId === 'string' ? payload.messageId : '';
   if (!pushRef.trim() || !messageId.trim()) return;
+  const trackingVersion = getTrackingVersion(payload);
+  const signedToken = typeof data?.event_auth_token === 'string' && data.event_auth_token.trim() ? data.event_auth_token : undefined;
   const timezone = await captureDeviceTimezone();
-  const id = JSON.stringify([pushRef, messageId, type, accion]);
+  const id = JSON.stringify(trackingVersion === 'v2' ? ['v2', pushRef, messageId, type, accion] : [pushRef, messageId, type, accion]);
+  let conflict = false;
   await transaction<void>('readwrite', (tx, result) => {
     const store = tx.objectStore('receipts');
     const request = store.getAll();
     request.onsuccess = () => {
       const all = request.result as Receipt[];
-      // Includes phase-one keys (three parts) without migrating or deleting existing records.
-      if (!all.some(item => item.pushRef === pushRef && item.messageId === messageId && eventType(item) === type && (item.accion ?? '') === accion)) {
-        const item: Receipt = { id, pushRef, messageId, eventType: type, accion, timestamp, ...timezone, status: 'pending', attempts: 0, retryAt: 0, terminal: false, leaseUntil: 0 };
-        if (advanced(item, all)) { item.status = 'superseded'; item.terminal = true; }
-        store.add(item);
-      }
-      result();
+      const addReceipt = () => {
+        // Includes legacy V1 keys without migrating or deleting existing records.
+        if (!all.some(item => version(item) === trackingVersion && item.pushRef === pushRef && item.messageId === messageId && eventType(item) === type && (item.accion ?? '') === accion)) {
+          const item: Receipt = { id, pushRef, messageId, version: trackingVersion, eventType: type, accion, timestamp, ...timezone, status: 'pending', attempts: 0, retryAt: 0, terminal: false, leaseUntil: 0 };
+          if (advanced(item, all)) { item.status = 'superseded'; item.terminal = true; }
+          store.add(item);
+        }
+        result();
+      };
+      if (trackingVersion !== 'v2' || !signedToken) { addReceipt(); return; }
+      const associations = tx.objectStore('associations');
+      const key = associationKey({ version: 'v2', pushRef, messageId });
+      const credentials = associations.get(key);
+      credentials.onsuccess = () => {
+        const previous = credentials.result as Association | undefined;
+        if (previous && previous.eventAuthToken !== signedToken) { conflict = true; result(); return; }
+        if (!previous) associations.add({ pushRef: key, reference: pushRef, version: 'v2', messageId, eventAuthToken: signedToken, savedAt: new Date().toISOString() });
+        addReceipt();
+      };
     };
   });
+  if (conflict) throw new Error('La notificación V2 ya tiene otra credencial; se conservó la original.');
 }
 
 async function claimReceipt(id: string) {
@@ -123,7 +151,7 @@ async function claimReceipt(id: string) {
       if (!receipt || receipt.status === 'accepted' || receipt.terminal || receipt.retryAt > now || receipt.leaseUntil > now) return;
       if (advanced(receipt, all)) { store.put({ ...receipt, status: 'superseded', terminal: true }); return; }
       if (blocked(receipt, all)) return;
-      const credentials = tx.objectStore('associations').get(receipt.pushRef);
+      const credentials = tx.objectStore('associations').get(associationKey(receipt));
       credentials.onsuccess = () => {
         const association = credentials.result as Association | undefined;
         if (!association) return;
@@ -152,17 +180,14 @@ async function finishReceipt(receipt: Receipt, accepted: boolean, terminal: bool
 }
 
 export async function flushPushReceipts() {
-  let endpoint: URL;
-  try {
-    endpoint = new URL(import.meta.env.VITE_DANA_PUSH_API_URL);
-    if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password) return;
-  } catch { return; }
   const receipts = await transaction<Receipt[]>('readonly', (tx, result) => {
     const request = tx.objectStore('receipts').getAll();
     request.onsuccess = () => result(request.result);
   });
   // One bounded pass, never a retry loop. Later availability signals resume eligible receipts.
   for (const item of receipts.sort((a, b) => rank[eventType(a)] - rank[eventType(b)] || a.timestamp.localeCompare(b.timestamp))) {
+    const endpoint = eventEndpoint(version(item));
+    if (!endpoint) continue;
     const claimed = await claimReceipt(item.id);
     if (!claimed) continue;
     const { receipt, association } = claimed;
@@ -198,7 +223,7 @@ export async function getReceiptDiagnostics(): Promise<ReceiptDiagnostics> {
       const items = (receipts.result as Receipt[]).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       result({ ...timezone, associated, lastEvent: items[0] ? eventType(items[0]) : null,
         status: items[0]?.status ?? null, pending: items.filter(outstanding).length,
-        events: items.slice(0, 20).map(item => ({ ...storedEventTimezone(item), id: item.id, eventType: eventType(item), messageId: item.messageId, timestamp: item.timestamp,
+        events: items.slice(0, 20).map(item => ({ ...storedEventTimezone(item), id: item.id, version: version(item), eventType: eventType(item), messageId: item.messageId, timestamp: item.timestamp,
           status: item.status, sent: item.attempts > 0, accepted: item.status === 'accepted', accion: item.accion ?? '' })) });
     };
   });
@@ -213,7 +238,7 @@ export async function nextReceiptAttempt(): Promise<number | null> {
     receipts.onsuccess = () => {
       const all = receipts.result as Receipt[];
       const times = all
-        .filter(item => outstanding(item) && references.includes(item.pushRef) && !blocked(item, all))
+        .filter(item => outstanding(item) && eventEndpoint(version(item)) && references.includes(associationKey(item)) && !blocked(item, all))
         .map(item => Math.max(item.retryAt, item.leaseUntil));
       result(times.length ? times.reduce((minimum, at) => Math.min(minimum, at)) : null);
     };

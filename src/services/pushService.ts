@@ -3,6 +3,7 @@ import { getMessaging, getToken, isSupported, onMessage, type MessagePayload } f
 import { validateFirebaseConfig } from '../push/firebaseConfig';
 import { recordPushEvent } from '../push/eventStore';
 import { queuePushReceipt, flushPushReceipts } from '../push/receiptTracking';
+import { safePushPayload } from '../push/pushPayload';
 import { registerSharedWorker } from './serviceWorkerService';
 import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } from './pushCapabilities';
 
@@ -21,7 +22,7 @@ function subscribe(onPayload: (payload: MessagePayload) => void) {
     const receivedAt = new Date().toISOString();
     await queuePushReceipt(payload as unknown as Record<string, unknown>, receivedAt).catch(() => {});
     await recordPushEvent('PUSH_RECEIVED', 'foreground', payload as unknown as Record<string, unknown>).catch(() => {});
-    onPayload(payload);
+    onPayload(safePushPayload(payload as unknown as Record<string, unknown>) as unknown as MessagePayload);
     if (Notification.permission === 'granted') {
       // Forward only onMessage receipts, never worker click events or restored history entries.
       try {

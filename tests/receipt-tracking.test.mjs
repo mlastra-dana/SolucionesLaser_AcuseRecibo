@@ -6,13 +6,15 @@ import { IDBFactory } from 'fake-indexeddb';
 import { build } from 'esbuild';
 
 const endpoint = 'https://lambda.example/register';
-const compiled = await build({
-  stdin: { contents: "import * as tracking from './src/push/receiptTracking'; import * as dana from './src/services/danaService'; import * as timezones from './src/push/eventTimezone'; import { followNotificationCta } from './src/push/followNotificationCta'; import { readPushEvents } from './src/push/eventStore'; globalThis.tracking = tracking; globalThis.dana = dana; globalThis.timezones = timezones; globalThis.followCta = followNotificationCta; globalThis.readEvents = readPushEvents;", resolveDir: process.cwd(), loader: 'ts' },
+const endpointV2 = 'https://lambda-v2.example/event';
+const compile = (env = { VITE_DANA_PUSH_API_URL: endpoint, VITE_DANA_PUSH_V2_API_URL: endpointV2 }) => build({
+  stdin: { contents: "import * as tracking from './src/push/receiptTracking'; import * as dana from './src/services/danaService'; import * as timezones from './src/push/eventTimezone'; import { followNotificationCta } from './src/push/followNotificationCta'; import { readPushEvents, recordPushEvent } from './src/push/eventStore'; globalThis.tracking = tracking; globalThis.dana = dana; globalThis.timezones = timezones; globalThis.followCta = followNotificationCta; globalThis.readEvents = readPushEvents; globalThis.recordEvent = recordPushEvent;", resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'iife', platform: 'browser',
-  define: { 'import.meta.env': JSON.stringify({ VITE_DANA_PUSH_API_URL: endpoint }) }
+  define: { 'import.meta.env': JSON.stringify(env) }
 });
+const compiled = await compile();
 
-function fixture(indexedDB = new IDBFactory()) {
+function fixture(indexedDB = new IDBFactory(), script = compiled.outputFiles[0].text) {
   let now = Date.parse('2026-10-02T12:00:00.000Z');
   const requests = [];
   const h = { timezone: 'America/Caracas', timezoneFailure: false, response: { status: 202, json: async () => ({ success: true, uploadAccepted: true }) } };
@@ -30,11 +32,12 @@ function fixture(indexedDB = new IDBFactory()) {
   const context = vm.createContext({ indexedDB, Intl: { DateTimeFormat }, Date: Clock, crypto: webcrypto, URL, URLSearchParams, AbortController, setTimeout, clearTimeout,
     fetch: async (url, options) => { requests.push({ url, body: JSON.parse(options.body), options }); return h.fetch ? h.fetch(url, options) : h.response; }
   });
-  vm.runInContext(compiled.outputFiles[0].text, context);
+  vm.runInContext(script, context);
   return { ...context, context, requests, h, advance: ms => { now += ms; } };
 }
 const association = (pushRef = 'PUSH-A', token = 'private-fixture-auth') => ({ pushRef, eventAuthToken: token, resultId: 91 });
 const payload = (pushRef = 'PUSH-A', messageId = 'firebase-message-1') => ({ messageId, data: { push_ref: pushRef, Titulo: 'DANA PUSH', cta_label: 'Conocer más', cta_action: 'CONOCER_MAS', cta_url: 'https://destination.example/' } });
+const payloadV2 = (pushRef = 'PUSH-A', messageId = 'firebase-message-1', token = 'signed-v2-fixture-token') => ({ messageId, data: { push_ref: pushRef, event_auth_token: token, Titulo: 'DANA PUSH V2', IMAGEN: 'https://destination.example/image.png', cta_label: 'Explorar novedades', cta_action: 'EXPLORAR_NOVEDADES', cta_url: 'https://destination.example/news', PROJECT_ID: 'must-not-be-sent', TABLE_CODE: 'must-not-be-sent' } });
 
 test('receipt before register waits for matching persisted association and preserves receipt timestamp', async () => {
   const f = fixture();
@@ -540,4 +543,157 @@ test('tracking storage failure does not block navigation or claim acceptance', a
   assert.equal(result.navigated, true);
   assert.equal(navigated, 'https://destination.example/');
   assert.equal(f.requests.length, 0);
+});
+
+test('V2 receipt stores its credential atomically and reports only to V2 without registration', async () => {
+  const f = fixture();
+  await f.tracking.queuePushReceipt(payloadV2());
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, endpointV2);
+  assert.deepEqual(f.requests[0].body, { action: 'event', push_ref: 'PUSH-A', eventAuthToken: 'signed-v2-fixture-token', event: 'PUSH_RECEIVED', messageId: 'firebase-message-1', timestamp: '2026-10-02T12:00:00.000Z', timezone: 'America/Caracas', accion: '' });
+  const diagnostics = await f.tracking.getReceiptDiagnostics();
+  assert.equal(diagnostics.associated, true);
+  assert.equal(diagnostics.events[0].version, 'v2');
+  assert.equal(JSON.stringify(diagnostics).includes('signed-v2-fixture-token'), false);
+  assert.equal(JSON.stringify(diagnostics).includes('eventAuthToken'), false);
+});
+
+test('V2 history redacts credentials and retains correlation for later opening and dynamic clicking', async () => {
+  const db = new IDBFactory(), f = fixture(db);
+  const message = payloadV2();
+  await f.tracking.queuePushReceipt(message);
+  await f.tracking.flushPushReceipts();
+  await f.recordEvent('PUSH_RECEIVED', 'background', message);
+  const read = db.open('dana-push-events', 1);
+  await new Promise((resolve, reject) => { read.onsuccess = resolve; read.onerror = reject; });
+  const rows = read.result.transaction('events').objectStore('events').getAll();
+  const persistedHistory = await new Promise((resolve, reject) => { rows.onsuccess = () => resolve(rows.result); rows.onerror = reject; });
+  read.result.close();
+  assert.equal(JSON.stringify(persistedHistory).includes('signed-v2-fixture-token'), false);
+  assert.equal(JSON.stringify(persistedHistory).includes('event_auth_token'), false);
+  const history = await f.readEvents();
+  const safe = history[0].payload;
+  assert.equal(safe.danaTrackingVersion, 'v2');
+  assert.equal(safe.data.event_auth_token, undefined);
+  assert.equal(safe.data.push_ref, message.data.push_ref);
+  assert.equal(safe.data.IMAGEN, message.data.IMAGEN);
+  assert.equal(safe.data.cta_action, 'EXPLORAR_NOVEDADES');
+  assert.equal(JSON.stringify(history).includes('signed-v2-fixture-token'), false);
+  const restored = fixture(db);
+  await restored.tracking.queuePushEvent('PUSH_OPENED', safe);
+  await restored.tracking.flushPushReceipts();
+  restored.context.window = { open: () => null, location: { assign() {} } };
+  await restored.followCta(safe);
+  await restored.tracking.flushPushReceipts();
+  for (let i = 0; i < 100 && (await restored.tracking.getReceiptDiagnostics()).pending; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const requests = [...f.requests, ...restored.requests];
+  assert.deepEqual(requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED', 'PUSH_CLICKED']);
+  assert.ok(requests.every(item => item.url === endpointV2));
+  assert.equal(requests.filter(item => item.body.event === 'PUSH_CLICKED').length, 1);
+  assert.equal(requests.find(item => item.body.event === 'PUSH_CLICKED').body.accion, 'EXPLORAR_NOVEDADES');
+  assert.ok(requests.every(item => item.body.eventAuthToken === 'signed-v2-fixture-token'));
+});
+
+test('V1 and V2 isolate credentials, deduplication and ordering even for identical reference and message IDs', async () => {
+  const f = fixture();
+  await f.tracking.saveReceiptAssociation(association());
+  await Promise.all([f.tracking.queuePushReceipt(payload()), f.tracking.queuePushReceipt(payloadV2())]);
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await f.tracking.queuePushEvent('PUSH_OPENED', payloadV2());
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 4);
+  assert.equal(f.requests.filter(item => item.url === endpoint).length, 2);
+  assert.equal(f.requests.filter(item => item.url === endpointV2).length, 2);
+  assert.ok(f.requests.every(item => item.body.eventAuthToken === (item.url === endpoint ? 'private-fixture-auth' : 'signed-v2-fixture-token')));
+  await Promise.all([f.tracking.queuePushReceipt(payload()), f.tracking.queuePushReceipt(payloadV2())]);
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 4);
+});
+
+test('different V2 notifications sharing a reference retain their own signed credentials', async () => {
+  const f = fixture();
+  await f.tracking.queuePushEvent('PUSH_OPENED', payloadV2('PUSH-A', 'message-A', 'signed-A'));
+  await f.tracking.flushPushReceipts();
+  await f.tracking.queuePushReceipt(payloadV2('PUSH-A', 'message-B', 'signed-B'));
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].body.event, 'PUSH_RECEIVED');
+  assert.deepEqual(f.requests.map(item => item.body.eventAuthToken), ['signed-A', 'signed-B']);
+  await assert.rejects(f.tracking.queuePushReceipt(payloadV2('PUSH-A', 'message-B', 'replacement')), /credencial.*original/);
+  await f.tracking.queuePushEvent('PUSH_OPENED', payloadV2('PUSH-A', 'message-B', 'signed-B'));
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests[2].body.eventAuthToken, 'signed-B');
+});
+
+test('V2 retry across page and worker preserves metadata and deduplicates concurrent callbacks', async () => {
+  const db = new IDBFactory(), first = fixture(db), second = fixture(db);
+  await Promise.all([first.tracking.queuePushReceipt(payloadV2()), second.tracking.queuePushReceipt(payloadV2())]);
+  first.h.response = { status: 503 };
+  second.h.response = { status: 503 };
+  await Promise.all([first.tracking.flushPushReceipts(), second.tracking.flushPushReceipts()]);
+  const firstRequest = [...first.requests, ...second.requests];
+  assert.equal(firstRequest.length, 1);
+  const restored = fixture(db);
+  restored.h.timezone = 'America/New_York';
+  restored.advance(30_001);
+  await restored.tracking.flushPushReceipts();
+  assert.equal(restored.requests.length, 1);
+  assert.equal(restored.requests[0].url, endpointV2);
+  assert.deepEqual(restored.requests[0].body, firstRequest[0].body);
+  assert.equal((await second.tracking.getReceiptDiagnostics()).pending, 0);
+});
+
+test('V2 never downgrades to V1 for malformed or absent signed credentials', async () => {
+  for (const token of ['', '  ', null, 12]) {
+    const f = fixture();
+    await f.tracking.saveReceiptAssociation(association());
+    await f.tracking.queuePushReceipt(payloadV2('PUSH-A', 'firebase-message-1', token));
+    await f.tracking.flushPushReceipts();
+    assert.equal(f.requests.length, 0);
+    assert.equal((await f.tracking.getReceiptDiagnostics()).events[0].version, 'v2');
+    assert.equal(await f.tracking.nextReceiptAttempt(), null);
+  }
+});
+
+test('missing or insecure V2 endpoint leaves V2 pending without blocking V1 or retry spinning', async () => {
+  for (const url of [undefined, 'http://insecure.example', 'https://user:pass@example.com']) {
+    const bundle = await compile({ VITE_DANA_PUSH_API_URL: endpoint, VITE_DANA_PUSH_V2_API_URL: url });
+    const f = fixture(new IDBFactory(), bundle.outputFiles[0].text);
+    await f.tracking.saveReceiptAssociation(association());
+    await f.tracking.queuePushReceipt(payload());
+    await f.tracking.queuePushReceipt(payloadV2());
+    await f.tracking.flushPushReceipts();
+    assert.equal(f.requests.length, 1);
+    assert.equal(f.requests[0].url, endpoint);
+    assert.equal((await f.tracking.getReceiptDiagnostics()).pending, 1);
+    assert.equal(await f.tracking.nextReceiptAttempt(), null);
+  }
+});
+
+test('V2 operates when the V1 URL is unset and forbidden responses remain terminal', async () => {
+  const bundle = await compile({ VITE_DANA_PUSH_V2_API_URL: endpointV2 });
+  const f = fixture(new IDBFactory(), bundle.outputFiles[0].text);
+  await f.tracking.queuePushReceipt(payloadV2());
+  f.h.response = { status: 403 };
+  await f.tracking.flushPushReceipts();
+  f.advance(86_400_000);
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, endpointV2);
+  assert.equal((await f.tracking.getReceiptDiagnostics()).status, 'error');
+  assert.equal(await f.tracking.nextReceiptAttempt(), null);
+});
+
+test('V2 pending receipt recovers its matching credential without replacing the original event metadata', async () => {
+  const f = fixture();
+  await f.tracking.queuePushReceipt(payloadV2('PUSH-A', 'firebase-message-1', ''));
+  await f.tracking.flushPushReceipts();
+  f.advance(15_000);
+  await f.tracking.queuePushReceipt(payloadV2());
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.requests[0].url, endpointV2);
+  assert.equal(f.requests[0].body.timestamp, '2026-10-02T12:00:00.000Z');
+  assert.equal(f.requests[0].body.eventAuthToken, 'signed-v2-fixture-token');
 });
