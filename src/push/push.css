@@ -49,6 +49,9 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .primary-button > svg:last-child { margin-left: auto; }
 .primary-button > svg:first-child { margin-right: auto; }
 .privacy-note { display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 10px; color: #6b7280; margin: 14px 0 0; text-align: center; }
+.registration-progress { color: #596271; font-size: 12px; line-height: 1.6; text-align: center; margin: 12px 0 0; }
+.message-image { display: block; max-width: 100%; max-height: 240px; width: auto; height: auto; object-fit: contain; margin: 12px 0; border-radius: 4px; }
+.message-image[hidden] { display: none; }
 .phase-note { display: flex; align-items: flex-start; gap: 7px; border-top: 1px solid #edf0f3; padding-top: 14px; margin: 17px 0 0; font-size: 11px; color: #6b7280; line-height: 1.7; }
 .phase-note svg { flex-shrink: 0; margin-top: 2px; color: #818996; }
 .error-message { display: flex; gap: 8px; font-size: 12px; line-height: 1.6; background: #fff2ed; border-left: 2px solid #dd5736; color: #9b3520; padding: 11px; margin-bottom: 15px; }

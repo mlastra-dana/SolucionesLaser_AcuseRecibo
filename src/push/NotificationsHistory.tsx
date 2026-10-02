@@ -12,7 +12,7 @@ export default function NotificationsHistory({ events, onOpen, onRefresh, onClea
     </div>
     {!messages.length ? <p className="empty-history">Todavía no hay notificaciones observadas en este dispositivo.</p> : <ul>
       {messages.map(message => <li key={message.id}>
-        <div className="notification-item-heading"><h3>{message.title || 'Sin título'}</h3><span className="notification-open-state">{message.opened ? <><Check size={13} /> Abierta</> : message.received ? 'Recibida' : 'Interacción registrada'}</span></div>
+        <div className="notification-item-heading"><h3>{message.title}</h3><span className="notification-open-state">{message.opened ? <><Check size={13} /> Abierta</> : message.received ? 'Recibida' : 'Interacción registrada'}</span></div>
         <p>{message.body || 'Sin cuerpo de mensaje'}</p>
         <div className="notification-item-meta"><time dateTime={message.timestamp}>{new Date(message.timestamp).toLocaleString('es')}</time><button className="text-button" onClick={() => onOpen(message)}>Abrir mensaje <ArrowUpRight size={15} /></button></div>
         {message.messageId && <small className="message-identifier">Firebase ID: {message.messageId}</small>}

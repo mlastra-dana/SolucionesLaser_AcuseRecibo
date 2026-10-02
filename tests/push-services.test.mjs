@@ -16,7 +16,8 @@ const config = {
 async function fixture(worker = false, overrides = {}) {
   const h = {
     supported: true, requested: 0, permissionResult: 'granted', token: 'test-fcm-token',
-    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false,
+    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false, requests: [],
+    response: { ok: true, status: 200, async json() { return { success: true, conversationStarted: true, resultId: 47 }; } },
     async record(type, context, payload) { h.events.push({ type, context, payload }); }
   };
   const modules = {
@@ -47,7 +48,8 @@ async function fixture(worker = false, overrides = {}) {
   });
   const notification = { permission: 'default', requestPermission: async () => { h.requested++; return h.permissionResult; } };
   const context = vm.createContext({
-    h, console, setTimeout, clearTimeout, URL,
+    h, console, setTimeout, clearTimeout, URL, AbortController,
+    fetch: async (url, options) => { h.requests.push({ url, options }); if (h.fetchHandler) return h.fetchHandler(url, options); return h.response; },
     Notification: notification,
     window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout, matchMedia: () => ({ matches: h.standalone }) },
     navigator: { userAgent: 'Chrome', platform: 'MacIntel', maxTouchPoints: 0, serviceWorker: { getRegistration: async () => h.workerRegistration, register: async (url, options) => { h.registrationCount++; h.registration = { url, options }; return { active: {} }; } } },
@@ -81,19 +83,18 @@ test('FCM registration uses permission, explicit worker and VAPID, with no DANA 
   assert.equal(received.length, 1);
   registration.unsubscribe();
   assert.equal(h.unsubscribeCount, 1);
-  const result = await context.dana.registerPushVisitor({ nombre: 'Maria Lastra', email: 'maria@example.com', telefono: '+58 412 123 4567', token: registration.token, source: 'DANA_PUSH_EXPERIENCE' });
-  assert.equal(result.status, 'pending');
+  assert.equal(h.requests.length, 0);
 });
 
 test('visitor details use one full name plus email and telephone, without external calls', async () => {
   const { context } = await fixture();
-  const details = { nombre: '  Demo Nombre Completo  ', email: '  demo@example.com  ', telefono: '+58 (412) 123-4567' };
+  const details = { nombre: '  Demo Nombre Completo  ', email: '  demo@example.com  ', telefono: ' +584121234567 ' };
   assert.equal(context.dana.validateVisitorDetails(details), null);
   for (const [field, value] of [
     ['nombre', ''], ['nombre', 'a'.repeat(121)],
     ['email', ''], ['email', 'demo'], ['email', 'demo @example.com'],
     ['telefono', ''], ['telefono', '123'], ['telefono', 'abc1234567'],
-    ['telefono', '+1234567890123456']
+    ['telefono', '+1234567890123456'], ['telefono', '+58 412 123 4567'], ['telefono', '+58(412)1234567']
   ]) {
     const invalid = { ...details, [field]: value };
     assert.equal(context.dana.validateVisitorDetails(invalid).field, field);
@@ -189,12 +190,94 @@ test('failed local tracking does not suppress data-only notifications', async ()
   assert.equal(h.notices.length, 1);
 });
 
-test('future DANA URL still cannot initiate a conversation in phase 1', async () => {
-  const { context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
-  const result = await context.dana.registerPushVisitor({ nombre: 'A B', email: 'demo@example.com', telefono: '+58 412 123 4567', token: 'test', source: 'DANA_PUSH_EXPERIENCE' });
-  assert.equal(result.status, 'pending');
-  assert.equal(result.endpointConfigured, true);
-  await assert.rejects(context.dana.registerPushVisitor({ nombre: '', email: 'demo@example.com', telefono: '+58 412 123 4567', token: 'test' }), /nombre completo/);
+test('DANA registration sends exactly four uppercase fields to the configured HTTPS Lambda', async () => {
+  const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example/register' });
+  const result = await context.dana.registerPushVisitor({ nombre: ' A B ', email: ' demo@example.com ', telefono: ' +584121234567 ', token: 'test', source: 'DANA_PUSH_EXPERIENCE' });
+  assert.equal(result.success, true);
+  assert.equal(result.conversationStarted, true);
+  assert.equal(result.resultId, 47);
+  assert.equal(h.requests.length, 1);
+  const { url, options } = h.requests[0];
+  assert.equal(url, 'https://intermediary.example/register');
+  assert.equal(options.method, 'POST');
+  assert.equal(options.headers['Content-Type'], 'application/json');
+  assert.deepEqual(JSON.parse(options.body), { NOMBRE: 'A B', EMAIL: 'demo@example.com', TELEFONO: '+584121234567', TOKEN: 'test' });
+  assert.equal(options.credentials, 'omit');
+  assert.equal(options.cache, 'no-store');
+  assert.equal(options.redirect, 'error');
+  assert.ok(options.signal);
+});
+
+const visitorFixture = { nombre: 'Demo Nombre', email: 'demo@example.com', telefono: '584121234567', token: 'test-token' };
+
+test('DANA registration requires a configured HTTPS endpoint without embedded credentials', async () => {
+  for (const url of ['', 'http://intermediary.example', 'https://user:secret@intermediary.example']) {
+    const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: url });
+    await assert.rejects(context.dana.registerPushVisitor(visitorFixture), error => error.code === 'configuration');
+    assert.equal(h.requests.length, 0);
+  }
+});
+
+test('DANA registration distinguishes HTTP failure, invalid JSON and missing conversation confirmation', async () => {
+  const cases = [
+    [{ ok: false, status: 503 }, 'unavailable'],
+    [{ ok: false, status: 403 }, 'http'],
+    [{ ok: true, status: 200, json: async () => { throw new SyntaxError('Invalid JSON'); } }, 'response'],
+    [{ ok: true, status: 200, json: async () => ({ success: false, conversationStarted: true }) }, 'response'],
+    [{ ok: true, status: 200, json: async () => ({ success: 'true', conversationStarted: true }) }, 'response'],
+    [{ ok: true, status: 200, json: async () => ({ success: true, conversationStarted: false }) }, 'conversation'],
+    [{ ok: true, status: 200, json: async () => ({ success: true }) }, 'conversation']
+  ];
+  for (const [response, code] of cases) {
+    const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+    h.response = response;
+    await assert.rejects(context.dana.registerPushVisitor(visitorFixture), error => error.code === code);
+    assert.equal(h.requests.length, 1);
+  }
+});
+
+test('explicit Lambda invocation envelopes are unwrapped without assuming resultId is 2', async () => {
+  const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  h.response.json = async () => ({ statusCode: 200, body: JSON.stringify({ success: true, conversationStarted: true, resultId: 981 }) });
+  assert.equal((await context.dana.registerPushVisitor(visitorFixture)).resultId, 981);
+  h.response.json = async () => ({ statusCode: 500, body: JSON.stringify({ success: true, conversationStarted: true }) });
+  await assert.rejects(context.dana.registerPushVisitor(visitorFixture), error => error.code === 'http');
+});
+
+test('network failure and AbortController timeout never retry POST automatically', async () => {
+  const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  h.fetchHandler = async () => { throw new TypeError('Network fixture'); };
+  await assert.rejects(context.dana.registerPushVisitor(visitorFixture), error => error.code === 'network' && /duplicados/.test(error.message));
+  assert.equal(h.requests.length, 1);
+  context.setTimeout = callback => setTimeout(callback, 5);
+  h.fetchHandler = (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+  });
+  await assert.rejects(context.dana.registerPushVisitor(visitorFixture), error => error.code === 'timeout' && /duplicados/.test(error.message));
+  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].options.signal.aborted, true);
+});
+
+test('Firebase registration reports stages and does not request already granted permissions again', async () => {
+  const { h, context } = await fixture();
+  context.Notification.permission = 'granted';
+  const stages = [];
+  await context.api.registerPushBrowser(() => {}, undefined, stage => stages.push(stage));
+  assert.deepEqual(stages, ['Conectando con Firebase', 'Registrando dispositivo']);
+  assert.equal(h.requested, 0);
+});
+
+test('DANA custom data fields are normalized for background display without duplicate automatic notifications', async () => {
+  const { h } = await fixture(true);
+  const data = { Titulo: 'DANA PUSH', Mensaje: 'Mensaje personalizado', IMAGEN: 'https://example.com/image.png' };
+  await h.background({ messageId: 'custom-data', data });
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.notices[0][0], 'DANA PUSH');
+  assert.equal(h.notices[0][1].body, 'Mensaje personalizado');
+  assert.equal(h.notices[0][1].image, data.IMAGEN);
+  await h.background({ messageId: 'automatic-data', data, notification: { body: 'Cuerpo automático' } });
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.events[1].payload.messageId, 'automatic-data');
 });
 
 test('already granted browsers reconnect foreground reception without permission or token requests', async () => {

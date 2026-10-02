@@ -1,3 +1,5 @@
+import { normalizeNotification } from './normalizeNotification';
+
 export type PushEventType = 'PUSH_RECEIVED' | 'PUSH_OPENED' | 'PUSH_CLICKED';
 export type PushEvent = {
   id: string;
@@ -11,11 +13,7 @@ export type PushEvent = {
 };
 
 export function getMessageDetails(payload: Record<string, unknown>) {
-  const notification = payload.notification as Record<string, unknown> | undefined;
-  const data = payload.data as Record<string, unknown> | undefined;
-  const title = notification?.title ?? data?.title;
-  const body = notification?.body ?? data?.body;
-  return { title: typeof title === 'string' ? title : undefined, body: typeof body === 'string' ? body : undefined };
+  return normalizeNotification(payload);
 }
 
 export type ObservedNotification = {

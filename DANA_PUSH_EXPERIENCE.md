@@ -2,6 +2,8 @@
 
 Demo independiente de Firebase Cloud Messaging para el proyecto existente `dana-push-demo-vzla`. Desarrollo en `dana-push-experience`; el portal original conserva su entrada y sus comandos. No se modifican las funciones Lambda existentes.
 
+La integración automática actual y la normalización de notificaciones se describen en [DANA_PUSH_INTEGRATION.md](DANA_PUSH_INTEGRATION.md). El recorrido manual y los resultados antiguos más abajo se conservan como referencia histórica.
+
 ## Ejecutar
 
 ```sh
@@ -28,10 +30,10 @@ Crea `.env.local` a partir de los nombres en `.env.example` o configúralos para
 | `VITE_FIREBASE_APP_ID` | App ID de la aplicación Web |
 | `VITE_FIREBASE_MEASUREMENT_ID` | Opcional; Analytics no se inicializa |
 | `VITE_FIREBASE_VAPID_KEY` | Clave **pública** Web Push de Cloud Messaging |
-| `VITE_DANA_PUSH_API_URL` | Reservada para la futura Lambda; no se llama en fase 1 |
+| `VITE_DANA_PUSH_API_URL` | URL HTTPS de la Lambda existente para el registro automático |
 | `VITE_PUSH_DEMO_MODE` | `true` para diagnóstico; `false` para ocultarlo |
 
-Se validan los datos y la configuración antes de pedir permiso. El formulario usa un único nombre completo (máximo de 120 caracteres), email y teléfono obligatorios. El teléfono acepta formato internacional y separadores habituales, con 7 a 15 dígitos; esta comprobación de formato no verifica la titularidad ni la existencia del contacto. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento. No existe un token simulado ni un envío automático. Los datos de contacto se mantienen únicamente en memoria y no se envían ni se guardan en el historial local.
+Se validan los datos y la configuración antes de pedir permiso. El formulario usa un único nombre completo (máximo de 120 caracteres), email y teléfono obligatorios. El teléfono acepta entre 7 y 15 dígitos con + inicial opcional, sin separadores; esta comprobación no verifica titularidad ni existencia del contacto. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento, y no se vuelve a pedir si ya está concedido. El frontend envía nombre, email, teléfono y token a la Lambda configurada para iniciar la conversación DANA. No persiste los contactos ni el token en el historial local y no genera tokens simulados.
 
 ## AWS Amplify
 
@@ -45,7 +47,9 @@ Se validan los datos y la configuración antes de pedir permiso. El formulario u
 
 Si la API key pública tiene restricciones de origen, habilita el nuevo origen HTTPS en la configuración correspondiente del proyecto existente. Un origen o perfil nuevo necesita registrar su propio navegador y obtener su token. No reutilizar el token de localhost para otro dominio.
 
-## Obtener un token y probar el primer Push
+## Recorrido Manual Histórico
+
+Para la versión actual no es necesario copiar tokens ni ejecutar Lambda Test: seguir [el recorrido automático](DANA_PUSH_INTEGRATION.md). Los pasos siguientes corresponden a la etapa anterior.
 
 1. Abre la URL HTTPS en Chrome (o localhost en desarrollo), introduce nombre completo, email y teléfono, acepta el consentimiento y pulsa **Registrarme y recibir mi Push**.
 2. Selecciona **Permitir**. Si el permiso está bloqueado, abre los controles del sitio junto a la dirección, habilita Notificaciones y recarga. Si cierras el diálogo, se muestra un mensaje y puedes reintentar.
@@ -65,7 +69,7 @@ La configuración del sistema operativo puede silenciar las notificaciones aun c
 - `PUSH_RECEIVED`: callback observable de Firebase, con contexto foreground/background.
 - `PUSH_CLICKED`: clic real en la notificación del sistema o en Abrir mensaje del banner.
 - `PUSH_OPENED`: apertura del contenido del banner o foco/apertura de la ventana tras el clic. **No equivale a lectura**.
-- `src/push/eventStore.ts` es el punto desacoplado para el futuro transporte de eventos. No hay webhook ni llamadas a AWS.
+- `src/push/eventStore.ts` es el punto desacoplado para el futuro transporte de eventos. Los eventos siguen siendo locales; el único POST a AWS es el registro explícito del visitante en Lambda.
 - Se mantienen hasta 50 eventos/payloads en IndexedDB **local del navegador**, para conservar diagnósticos incluso cuando la pestaña estaba cerrada. No es un almacenamiento público ni un registro de visitantes. Se deduplican por tipo y message ID si está presente. Sin ID no se puede garantizar deduplicación de reenvíos. Se pueden borrar desde el diagnóstico.
 - No se generan confirmaciones de entrega o lectura. El historial puede no estar disponible en modo privado y se pierde si se borran los datos del sitio. Evita enviar datos sensibles en los payloads de la demo.
 - `VITE_PUSH_DEMO_MODE=false` oculta el panel, no constituye una autorización ni un control de seguridad.
@@ -95,4 +99,4 @@ Comprobación del origen publicado el 2026-10-01: `https://dana-push-experience.
 Referencia oficial: [recepción de mensajes Firebase Web](https://firebase.google.com/docs/cloud-messaging/web/receive-messages), que describe el empaquetado del worker modular y la visualización automática de payloads `notification`; [configuración del cliente Web](https://firebase.google.com/docs/cloud-messaging/web/get-started).
 La selección de builds por `AWS_BRANCH` y la prioridad de `amplify.yml` están descritas en [AWS: editar la especificación de build](https://docs.aws.amazon.com/amplify/latest/userguide/edit-build-settings.html).
 
-Pendiente: implementar el contrato y la Lambda de Start Conversation, conectar `registerPushVisitor()` al endpoint intermedio, validar el payload de servidor y añadir transporte de eventos a una Lambda. El Push seguirá enviándose desde DANA, no desde Lambda. En fase 1 `registerPushVisitor()` devuelve `pending`, aun cuando se configure la URL futura.
+El contrato de registro automático está implementado en `registerPushVisitor()` y usa la Lambda ya existente. No se creó ni modificó backend. Sigue pendiente el transporte externo de eventos; el Push se envía desde DANA mediante Firebase. La prueba real de esta versión debe realizarse después de configurar la URL y publicar la rama.

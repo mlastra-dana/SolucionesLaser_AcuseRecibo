@@ -2,6 +2,8 @@
 
 Implementacion local en `dana-push-experience`. No se han modificado Amplify, DANAconnect, Firebase, la VAPID ni las variables publicadas. No se ha realizado commit, push ni deploy de esta conversion.
 
+Actualizacion de registro automatico: consultar [DANA_PUSH_INTEGRATION.md](DANA_PUSH_INTEGRATION.md). Las validaciones de instalacion de esta guia se conservan; el registro ahora llama a la Lambda existente.
+
 ## Compilar y probar
 
 ```sh
@@ -24,13 +26,13 @@ npm run preview -- --host 127.0.0.1 --port 4176
 - Se conservan `VITE_FIREBASE_*`, `getToken` con la misma VAPID publica y worker explicito, `onMessage`, `onBackgroundMessage` y el listener foreground al recargar un origen ya autorizado.
 - Firebase muestra payloads `notification` automaticamente. Solo los payloads exclusivamente `data` llaman a `showNotification`; admiten `title`, `body`, `icon`, `image` y destino HTTPS. En mensajes `notification`, configurar icono/imagen/link desde el envio DANA/FCM.
 - El clic cierra la notificacion, enfoca una ventana del origen de destino o la abre y recupera el contenido desde IndexedDB. Para recuperar el mensaje en esta app, el destino debe ser su origen y su ruta `/`, opcionalmente con query. Un destino externo sigue siendo externo.
-- Historial local limitado a 50 eventos, agrupados por message ID cuando existe. Recibida, clic y apertura se registran por interacciones observadas; apertura no significa lectura. No hay tracking externo, Lambda, DynamoDB ni Start Conversation.
+- Historial local limitado a 50 eventos, agrupados por message ID cuando existe. Recibida, clic y apertura se registran por interacciones observadas; apertura no significa lectura. No hay tracking externo ni DynamoDB. El formulario llama a la Lambda existente para iniciar Start Conversation; no se crearon nuevas Lambdas.
 
 ## Instalacion
 
 **Escritorio Chrome/Edge:** abrir la URL HTTPS en perfil normal. Usar Instalar aplicacion cuando el navegador emita `beforeinstallprompt`, o la opcion de instalacion del navegador. Abrir desde el icono creado. La aceptacion del dialogo sola no se interpreta como instalacion completada. En pestañas normales puede no ser posible detectar una instalacion existente; el estado independiente se obtiene de `display-mode` o `navigator.standalone`.
 
-**Android Chrome:** abrir la URL HTTPS, instalar desde el boton disponible o el menu del navegador, abrir el icono DANA Push y completar el mismo formulario con consentimiento. Permitir notificaciones y copiar el token desde diagnostico para el envio DANA. La web compatible tambien permite registrarse sin instalar.
+**Android Chrome:** abrir la URL HTTPS, instalar desde el boton disponible o el menu del navegador, abrir el icono DANA Push y completar el mismo formulario con consentimiento. Permitir notificaciones: el token se genera y se envia a la Lambda automaticamente. La web compatible tambien permite registrarse sin instalar.
 
 **iPhone/iPad:** Safari > Compartir > Anadir a pantalla de inicio > activar Abrir como app si aparece > Anadir. Abrir desde ese icono, no desde la pestaña Safari. El flujo Push requiere Web Push del sistema (iOS/iPadOS 16.4 o posterior), APIs disponibles y soporte real de Firebase. El permiso se pide al enviar el formulario, dentro de una accion del usuario. No se muestra un boton de instalacion inoperante en iOS.
 
@@ -56,7 +58,7 @@ Fuentes: [Firebase: entornos compatibles](https://firebase.google.com/docs/web/e
 
 ## Primera prueba y matriz A-F
 
-Antes de cada envio, copiar el token real de esa instancia desde diagnostico. Usar el envio DANA existente, Application ID `DANA-PUSH-Demo`, token en UFID, titulo/cuerpo distintos por prueba y URL de destino `https://dana-push-experience.d1al7cfbz0rrq3.amplifyapp.com/`. No hay envio automatico al registrarse.
+La primera prueba usa el formulario y la Lambda configurada, sin copiar tokens. Para envios manuales adicionales de foreground/background, usar el envio DANA existente, Application ID `DANA-PUSH-Demo`, token del diagnostico en UFID, titulo/cuerpo distintos y destino `https://dana-push-experience.d1al7cfbz0rrq3.amplifyapp.com/`. La confirmacion del registro automatico no confirma entrega del Push.
 
 | Prueba | Recorrido y criterio |
 | --- | --- |

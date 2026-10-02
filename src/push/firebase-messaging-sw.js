@@ -2,6 +2,7 @@ import { initializeApp } from 'firebase/app';
 import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
 import { getFirebaseConfig } from './firebaseConfig';
 import { recordPushEvent } from './eventStore';
+import { normalizeNotification } from './normalizeNotification';
 import { setCacheNameDetails } from 'workbox-core';
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
@@ -64,10 +65,11 @@ if (config.apiKey && config.projectId === 'dana-push-demo-vzla' && config.appId 
     await track('PUSH_RECEIVED', payload);
     // Firebase displays notification payloads automatically. Only render data-only messages ourselves.
     if (!payload.notification) {
-      await self.registration.showNotification(payload.data?.title || 'DANAconnect', {
-        body: payload.data?.body || 'Has recibido una nueva notificación.',
+      const details = normalizeNotification(payload);
+      await self.registration.showNotification(details.title, {
+        body: details.body,
         icon: payload.data?.icon || '/pwa/icon-192.png',
-        ...(payload.data?.image ? { image: payload.data.image } : {}),
+        ...(details.image ? { image: details.image } : {}),
         tag: payload.messageId,
         data: { danaPayload: payload }
       });

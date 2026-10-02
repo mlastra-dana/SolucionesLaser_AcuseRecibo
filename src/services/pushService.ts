@@ -45,17 +45,19 @@ export async function getPushDiagnostics() {
 }
 export type PushDiagnostics = Awaited<ReturnType<typeof getPushDiagnostics>>;
 
-export async function registerPushBrowser(onPayload: (payload: MessagePayload) => void, knownCapabilities?: PushCapabilities) {
+export async function registerPushBrowser(onPayload: (payload: MessagePayload) => void, knownCapabilities?: PushCapabilities, onStage?: (stage: 'Conectando con Firebase' | 'Registrando dispositivo') => void) {
+  onStage?.('Conectando con Firebase');
   const capabilities = knownCapabilities ?? await getPushCapabilities();
   if (!capabilities.supported) throw new Error(pushUnavailableMessage(capabilities.reason));
   validateFirebaseConfig();
   if (Notification.permission === 'denied') throw new Error('Las notificaciones están bloqueadas. En Chrome, abre los controles del sitio junto a la dirección, permite las notificaciones y recarga la página.');
-  const permission = await Notification.requestPermission();
+  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
   if (permission !== 'granted') {
     throw new Error(permission === 'denied'
       ? 'Rechazaste las notificaciones. Para continuar, permite las notificaciones en la configuración de este sitio y vuelve a intentarlo.'
       : 'No concediste el permiso. Vuelve a intentarlo y selecciona Permitir para preparar tu navegador.');
   }
+  onStage?.('Registrando dispositivo');
   const registration = await registerSharedWorker();
   const messaging = getPushMessaging();
   const unsubscribe = subscribe(onPayload);

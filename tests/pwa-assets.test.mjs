@@ -56,4 +56,28 @@ test('notification history groups real events and only marks opened after an act
   assert.equal(opened[0].title, 'Real fixture');
   const clickOnly = context.history([{ ...base, id: 'clicked:one', type: 'PUSH_CLICKED' }]);
   assert.equal(clickOnly[0].received, false);
+  const previous = context.history([{ ...base, payload: { messageId: 'one', data: { Titulo: 'DANA PUSH' }, notification: { body: 'Mensaje DANA previo' } } }]);
+  assert.equal(previous[0].title, 'DANA PUSH');
+  assert.equal(previous[0].body, 'Mensaje DANA previo');
+});
+
+test('normalization uses the first nonempty valid DANA field and safe images without mutating payloads', async () => {
+  const result = await build({ stdin: { contents: "import { normalizeNotification } from './src/push/normalizeNotification'; globalThis.normalize = normalizeNotification;", resolveDir: process.cwd(), loader: 'ts' }, bundle: true, write: false, format: 'iife' });
+  const context = vm.createContext({ URL });
+  vm.runInContext(result.outputFiles[0].text, context);
+  const payload = { messageId: 'firebase-real-id-fixture', notification: { title: '  ', body: '', image: 'https://example.com/notification.png' }, data: { Titulo: 'DANA PUSH', titulo: 'Segundo', title: 'Tercero', Mensaje: 'Hola Demo', mensaje: 'Segundo cuerpo', body: 'Tercer cuerpo', IMAGEN: 'https://example.com/dana.png' } };
+  const original = JSON.stringify(payload);
+  const normalized = context.normalize(payload);
+  assert.equal(normalized.title, 'DANA PUSH');
+  assert.equal(normalized.body, 'Hola Demo');
+  assert.equal(normalized.image, payload.data.IMAGEN);
+  assert.equal(JSON.stringify(payload), original);
+  assert.equal(context.normalize({ ...payload, notification: { title: 'Principal', body: 'Principal cuerpo' } }).title, 'Principal');
+  assert.equal(context.normalize({ data: { Titulo: 4, titulo: '  Minúscula  ', Mensaje: false, mensaje: '  Mensaje  ', IMAGEN: 'javascript:alert(1)', imagen: 'https://example.com/valid.png' } }).image, 'https://example.com/valid.png');
+  assert.equal(context.normalize({ data: { titulo: '  Minúscula  ', mensaje: '  Mensaje  ' } }).title, 'Minúscula');
+  assert.equal(context.normalize({ data: { titulo: '  Minúscula  ', mensaje: '  Mensaje  ' } }).body, 'Mensaje');
+  assert.equal(context.normalize({ data: { title: 'title', body: 'body' } }).title, 'title');
+  assert.equal(context.normalize(null).title, 'DANA Push Experience');
+  assert.equal(context.normalize({ notification: { title: 44 } }).title, 'DANA Push Experience');
+  assert.equal(context.normalize({ data: { IMAGEN: 'http://example.com/image.png' } }).image, undefined);
 });
