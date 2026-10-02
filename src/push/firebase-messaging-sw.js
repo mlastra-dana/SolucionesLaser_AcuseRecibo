@@ -3,7 +3,7 @@ import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
 import { getFirebaseConfig } from './firebaseConfig';
 import { recordPushEvent } from './eventStore';
 import { normalizeNotification } from './normalizeNotification';
-import { queuePushReceipt, flushPushReceipts } from './receiptTracking';
+import { queuePushReceipt, queuePushEvent, flushPushReceipts } from './receiptTracking';
 import { setCacheNameDetails } from 'workbox-core';
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
@@ -43,6 +43,8 @@ async function showObservedNotification(payload) {
       icon: payload.notification?.icon || payload.data?.icon || '/pwa/icon-192.png',
       ...(details.image ? { image: details.image } : {}),
       tag: messageId,
+      ...(typeof Notification !== 'undefined' && Notification.maxActions > 0
+        ? { actions: [{ action: 'CONOCER_MAS', title: 'Conocer más' }] } : {}),
       data: { danaPayload: payload }
     });
   } catch (error) {
@@ -62,9 +64,9 @@ self.addEventListener('message', event => {
   event.waitUntil(showObservedNotification(payload).catch(() => {}));
 });
 
-async function track(type, payload) {
+async function track(type, payload, timestamp, accion = '') {
   const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
-  try { await recordPushEvent(type, 'background', normalized); } catch { /* Tracking must not prevent a notification. */ }
+  try { await recordPushEvent(type, 'background', normalized, timestamp, accion); } catch { /* Tracking must not prevent a notification. */ }
   const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
   clients.forEach(client => client.postMessage({ source: 'DANA_PUSH_WORKER', type, payload: normalized }));
 }
@@ -84,17 +86,30 @@ self.addEventListener('notificationclick', event => {
   if (!payload) return;
   event.stopImmediatePropagation();
   event.notification.close();
+  const timestamp = new Date().toISOString();
+  const cta = event.action === 'CONOCER_MAS';
+  const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
   event.waitUntil((async () => {
-    await track('PUSH_CLICKED', payload);
-    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const target = notificationUrl(payload);
-    const client = clients.find(item => new URL(item.url).origin === new URL(target).origin);
-    let opened;
-    if (client) {
-      if (client.url !== target && client.navigate) await client.navigate(target);
-      opened = await client.focus();
-    } else opened = await self.clients.openWindow(target);
-    if (opened) await track('PUSH_OPENED', payload);
+    const reporting = (async () => {
+      await queuePushEvent('PUSH_OPENED', normalized, timestamp).catch(() => {});
+      await track('PUSH_OPENED', normalized, timestamp).catch(() => {});
+      if (cta) {
+        await queuePushEvent('PUSH_CLICKED', normalized, timestamp, 'CONOCER_MAS').catch(() => {});
+        await track('PUSH_CLICKED', normalized, timestamp, 'CONOCER_MAS').catch(() => {});
+      }
+      await flushPushReceipts().catch(() => {});
+    })();
+    const navigation = (async () => {
+      const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      const target = cta ? self.location.origin + '/#conocer-mas' : notificationUrl(payload);
+      const client = clients.find(item => new URL(item.url).origin === new URL(target).origin);
+      if (client) {
+        try { if (client.url !== target && client.navigate) await client.navigate(target); }
+        finally { await client.focus(); }
+      } else await self.clients.openWindow(target);
+    })();
+    // Navigation never waits for the network; waitUntil keeps durable reporting alive independently.
+    await Promise.allSettled([reporting, navigation]);
   })());
 });
 

@@ -8,7 +8,7 @@ import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } fr
 import { usePwa } from './usePwa';
 import InstallExperience from './InstallExperience';
 import NotificationsHistory from './NotificationsHistory';
-import { flushPushReceipts, getReceiptDiagnostics, nextReceiptAttempt, type ReceiptDiagnostics } from './receiptTracking';
+import { flushPushReceipts, getReceiptDiagnostics, nextReceiptAttempt, queuePushEvent, type ReceiptDiagnostics } from './receiptTracking';
 
 const demoMode = import.meta.env.VITE_PUSH_DEMO_MODE !== 'false';
 type RegistrationStage = 'Validando información' | 'Conectando con Firebase' | 'Registrando dispositivo' | 'Enviando información a DANAconnect' | 'Preparando notificación' | 'Registro completado';
@@ -34,6 +34,8 @@ export default function PushExperience() {
   const [latest, setLatest] = useState<MessagePayload | null>(null);
   const [latestTimestamp, setLatestTimestamp] = useState('');
   const [revealed, setRevealed] = useState(false);
+  const [showMore, setShowMore] = useState(window.location.hash === '#conocer-mas');
+  const moreTitle = useRef<HTMLHeadingElement>(null);
   const [messageContext, setMessageContext] = useState<'foreground' | 'background'>('foreground');
   const stop = useRef<(() => void) | null>(null);
   const listenerGeneration = useRef(0);
@@ -49,7 +51,7 @@ export default function PushExperience() {
       const stored = await readPushEvents();
       setEvents(stored);
       setHistoryError('');
-      const clicked = stored.find(item => item.type === 'PUSH_CLICKED' && item.context === 'background');
+      const clicked = stored.find(item => item.type === 'PUSH_OPENED' && item.context === 'background') ?? stored.find(item => item.type === 'PUSH_CLICKED' && item.context === 'background');
       if (clicked && restoredClick.current !== clicked.id) {
         restoredClick.current = clicked.id;
         setLatest(clicked.payload as unknown as MessagePayload);
@@ -152,6 +154,14 @@ export default function PushExperience() {
 
   useEffect(() => { if (visitor) { successTitle.current?.focus(); setStage('Registro completado'); } }, [visitor]);
 
+  useEffect(() => {
+    const hashChanged = () => { if (window.location.hash === '#conocer-mas') setShowMore(true); };
+    window.addEventListener('hashchange', hashChanged);
+    return () => window.removeEventListener('hashchange', hashChanged);
+  }, []);
+
+  useEffect(() => { if (showMore) { moreTitle.current?.focus({ preventScroll: true }); moreTitle.current?.scrollIntoView({ block: 'center' }); } }, [showMore]);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (submitting.current) return;
@@ -216,12 +226,7 @@ export default function PushExperience() {
   async function openMessage() {
     if (!latest) return;
     setRevealed(true);
-    try {
-      const payload = latest as unknown as Record<string, unknown>;
-      if (messageContext === 'foreground') await recordPushEvent('PUSH_CLICKED', 'foreground', payload);
-      await recordPushEvent('PUSH_OPENED', 'foreground', payload);
-      await refreshEvents();
-    } catch { setHistoryError('El mensaje se abrió, pero no pudimos guardar el evento local.'); }
+    await observeInteraction('PUSH_OPENED', latest as unknown as Record<string, unknown>);
   }
 
   async function openHistoryMessage(message: ObservedNotification) {
@@ -229,10 +234,24 @@ export default function PushExperience() {
     setLatestTimestamp(message.timestamp);
     setMessageContext(message.context);
     setRevealed(true);
-    try {
-      await recordPushEvent('PUSH_OPENED', 'foreground', message.payload);
-      await refreshEvents();
-    } catch { setHistoryError('El mensaje se abrió, pero no pudimos guardar el evento local.'); }
+    await observeInteraction('PUSH_OPENED', message.payload);
+  }
+
+  async function observeInteraction(type: 'PUSH_OPENED' | 'PUSH_CLICKED', payload: Record<string, unknown>, accion = '') {
+    const timestamp = new Date().toISOString();
+    let failed = false;
+    await queuePushEvent(type, payload, timestamp, accion).catch(() => { failed = true; });
+    await recordPushEvent(type, 'foreground', payload, timestamp, accion).catch(() => { failed = true; });
+    await refreshEvents();
+    if (failed) setHistoryError('La interacción continúa, pero no pudimos guardar todo su seguimiento local.');
+    void flushPushReceipts().catch(() => {});
+  }
+
+  async function learnMore() {
+    if (!latest || !revealed) return;
+    setShowMore(true);
+    moreTitle.current?.scrollIntoView({ block: 'center' });
+    await observeInteraction('PUSH_CLICKED', latest as unknown as Record<string, unknown>, 'CONOCER_MAS');
   }
 
   function clearHistory() {
@@ -296,7 +315,7 @@ export default function PushExperience() {
             )}
           </div>
 
-          {latest && latestDetails && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latestDetails.title}</h4><p>{latestDetails.body || 'Sin cuerpo de mensaje'}</p>{revealed && <>{latestDetails.image && <img key={latestDetails.image} className="message-image" src={latestDetails.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}<p>Message ID: {latest.messageId || 'No disponible'}</p><p>{latestTimestamp}</p><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
+          {latest && latestDetails && <aside className="message-banner" aria-live="polite"><BellRing size={23} /><div><small>{messageContext === 'foreground' ? 'MENSAJE OBSERVADO · PRIMER PLANO' : 'MENSAJE OBSERVADO · SEGUNDO PLANO'}</small><h3>Tu notificación</h3><h4>{latestDetails.title}</h4><p>{latestDetails.body || 'Sin cuerpo de mensaje'}</p>{revealed && <><button className="secondary-button notification-cta" onClick={() => void learnMore()}>Conocer más <ArrowRight size={15} /></button>{latestDetails.image && <img key={latestDetails.image} className="message-image" src={latestDetails.image} alt="" loading="lazy" referrerPolicy="no-referrer" onError={event => { event.currentTarget.hidden = true; }} />}<p>Message ID: {latest.messageId || 'No disponible'}</p><p>{latestTimestamp}</p><pre>{JSON.stringify(latest, null, 2)}</pre></>}</div><button title="Abrir mensaje" aria-label="Abrir mensaje" className="icon-button" onClick={() => void openMessage()}><ArrowRight size={18} /></button><button title="Cerrar mensaje" aria-label="Cerrar mensaje" className="icon-button" onClick={() => setLatest(null)}><X size={18} /></button></aside>}
 
           {historyError && <p className="history-error" role="status">{historyError}</p>}
           {demoMode && <NotificationsHistory events={events} onOpen={message => void openHistoryMessage(message)} onRefresh={() => void refreshEvents()} onClear={clearHistory} />}
@@ -306,10 +325,22 @@ export default function PushExperience() {
             <dl>
               <dt>PushRef asociado</dt><dd>{receiptDiagnostics?.associated ? 'Sí' : 'No'}</dd>
               <dt>Último evento</dt><dd>{receiptDiagnostics?.lastEvent ?? '—'}</dd>
-              <dt>Envío a Lambda</dt><dd>{receiptStorageError ? 'error' : receiptDiagnostics?.status === 'accepted' ? 'aceptado' : receiptDiagnostics?.status === 'error' ? 'error' : receiptDiagnostics?.status === 'pending' ? 'pendiente' : '—'}</dd>
+              <dt>Envío a Lambda</dt><dd>{receiptStorageError ? 'error' : receiptDiagnostics?.status === 'accepted' ? 'aceptado' : receiptDiagnostics?.status === 'sending' ? 'enviando' : receiptDiagnostics?.status === 'superseded' ? 'no enviado: estado avanzado' : receiptDiagnostics?.status === 'error' ? 'error' : receiptDiagnostics?.status === 'pending' ? 'pendiente' : '—'}</dd>
               <dt>Cantidad de eventos pendientes</dt><dd>{receiptDiagnostics?.pending ?? 0}</dd>
             </dl>
+            {!!receiptDiagnostics?.events.length && <ul className="tracking-events">
+              {receiptDiagnostics.events.map(item => <li key={item.id}>
+                <strong>{item.eventType}</strong><span>{item.status === 'accepted' ? 'Aceptado' : item.status === 'sending' ? 'Enviando' : item.status === 'superseded' ? 'No enviado: estado avanzado' : item.status === 'error' ? 'Error' : 'Pendiente'}</span>
+                <small>Detectado: Sí · Enviado: {item.sent ? 'Sí' : 'No'} · Aceptado: {item.accepted ? 'Sí' : 'No'}</small>
+                <time dateTime={item.timestamp}>{new Date(item.timestamp).toLocaleString('es')}</time>
+              </li>)}
+            </ul>}
           </details>}
+
+          {showMore && <section id="conocer-mas" className="more-information" aria-labelledby="more-title">
+            <h2 id="more-title" ref={moreTitle} tabIndex={-1}>DANAconnect</h2>
+            <p>Comunicaciones que conectan contigo: avisos de operaciones, recordatorios y novedades directamente en tu dispositivo.</p>
+          </section>}
 
         </section>
 

@@ -9,6 +9,7 @@ export type PushEvent = {
   context: 'foreground' | 'background';
   title?: string;
   body?: string;
+  accion?: string;
   payload: Record<string, unknown>;
 };
 
@@ -61,11 +62,11 @@ export async function readPushEvents(): Promise<PushEvent[]> {
   } finally { db.close(); }
 }
 
-export async function recordPushEvent(type: PushEventType, context: PushEvent['context'], payload: Record<string, unknown>): Promise<PushEvent> {
+export async function recordPushEvent(type: PushEventType, context: PushEvent['context'], payload: Record<string, unknown>, timestamp = new Date().toISOString(), accion = ''): Promise<PushEvent> {
   const messageId = typeof payload.messageId === 'string' ? payload.messageId : undefined;
   const event: PushEvent = {
-    id: messageId ? `${type}:${messageId}` : crypto.randomUUID(),
-    type, context, messageId, timestamp: new Date().toISOString(), ...getMessageDetails(payload), payload
+    id: messageId ? `${type}:${messageId}${accion ? `:${accion}` : ''}` : crypto.randomUUID(),
+    type, context, messageId, timestamp, accion, ...getMessageDetails(payload), payload
   };
   const db = await openDatabase();
   try {

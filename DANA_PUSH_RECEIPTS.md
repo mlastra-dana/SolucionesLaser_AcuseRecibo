@@ -1,5 +1,7 @@
 # Fase 1: Recepcion Real
 
+Guia historica de fase 1. El usuario confirma su aceptacion real en Contact Manager, UID 19. La ampliacion actual de apertura/clic se documenta en [DANA_PUSH_INTERACTIONS.md](DANA_PUSH_INTERACTIONS.md); mantiene los stores, credenciales, claves antiguas y contrato de recepcion de esta fase.
+
 Solo se reporta `PUSH_RECEIVED` para referencias registradas desde esta PWA. No se modifica Lambda, Contact Manager, Firebase, VAPID ni el envio DANA. Los eventos de clic y apertura preexistentes siguen siendo locales; no se reportan a la API.
 
 ## Asociacion y Cola

@@ -202,3 +202,128 @@ test('blocked optional BroadcastChannel does not lose committed associations or 
   await f.tracking.flushPushReceipts();
   assert.equal((await f.tracking.getReceiptDiagnostics()).status, 'accepted');
 });
+
+test('three event types use exact contract and original timestamps, ordered by stage even when queued out of order', async () => {
+  const f = fixture();
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.queuePushEvent('PUSH_CLICKED', payload(), '2026-10-02T12:03:00.000Z', 'CONOCER_MAS');
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload(), '2026-10-02T12:02:00.000Z');
+  await f.tracking.queuePushReceipt(payload(), '2026-10-02T12:01:00.000Z');
+  await f.tracking.flushPushReceipts();
+  assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED', 'PUSH_CLICKED']);
+  assert.deepEqual(f.requests.map(item => item.body.accion), ['', '', 'CONOCER_MAS']);
+  assert.deepEqual(f.requests.map(item => item.body.timestamp), ['2026-10-02T12:01:00.000Z', '2026-10-02T12:02:00.000Z', '2026-10-02T12:03:00.000Z']);
+  for (const { body } of f.requests) assert.deepEqual(Object.keys(body).sort(), ['action', 'push_ref', 'eventAuthToken', 'event', 'messageId', 'timestamp', 'accion'].sort());
+  assert.equal((await f.tracking.getReceiptDiagnostics()).events.length, 3);
+});
+
+test('transient receipt failure holds opened and clicked until receipt acceptance, without spin retries', async () => {
+  const f = fixture();
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.queuePushReceipt(payload());
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await f.tracking.queuePushEvent('PUSH_CLICKED', payload(), undefined, 'CONOCER_MAS');
+  f.h.response = { status: 503 };
+  await f.tracking.flushPushReceipts();
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 1);
+  assert.equal(await f.tracking.nextReceiptAttempt(), Date.parse('2026-10-02T12:00:30.000Z'));
+  f.advance(30_001);
+  f.h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  await f.tracking.flushPushReceipts();
+  assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_RECEIVED', 'PUSH_OPENED', 'PUSH_CLICKED']);
+});
+
+test('late lower event remains locally detected but cannot regress a previously attempted advanced state', async () => {
+  const f = fixture();
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await f.tracking.flushPushReceipts();
+  await f.tracking.queuePushReceipt(payload());
+  await f.tracking.flushPushReceipts();
+  assert.equal(f.requests.length, 1);
+  const status = await f.tracking.getReceiptDiagnostics();
+  assert.equal(status.events.find(item => item.eventType === 'PUSH_RECEIVED').status, 'superseded');
+  assert.equal(status.pending, 0);
+  assert.equal(await f.tracking.nextReceiptAttempt(), null);
+});
+
+test('deduplication is event/action aware across contexts, without converting body opening into clicked', async () => {
+  const db = new IDBFactory(), first = fixture(db), second = fixture(db);
+  await first.tracking.saveReceiptAssociation(association());
+  await Promise.all([first, second].map(f => f.tracking.queuePushEvent('PUSH_OPENED', payload())));
+  await first.tracking.queuePushEvent('PUSH_CLICKED', payload());
+  await first.tracking.queuePushEvent('PUSH_CLICKED', payload(), undefined, 'UNKNOWN_ACTION');
+  await Promise.all([first, second].map(f => f.tracking.queuePushEvent('PUSH_CLICKED', payload(), undefined, 'CONOCER_MAS')));
+  await Promise.all([first.tracking.flushPushReceipts(), second.tracking.flushPushReceipts()]);
+  await first.tracking.flushPushReceipts();
+  const requests = [...first.requests, ...second.requests];
+  assert.equal(requests.filter(item => item.body.event === 'PUSH_OPENED').length, 1);
+  assert.equal(requests.filter(item => item.body.event === 'PUSH_CLICKED').length, 1);
+});
+
+test('phase-one stored receipts and dedup keys remain valid without database version or store changes', async () => {
+  const db = new IDBFactory(), f = fixture(db);
+  await f.tracking.saveReceiptAssociation(association());
+  const request = db.open('dana-push-receipts', 1);
+  await new Promise((resolve, reject) => { request.onsuccess = resolve; request.onerror = reject; });
+  const connection = request.result;
+  assert.equal(connection.version, 1);
+  assert.deepEqual([...connection.objectStoreNames], ['associations', 'receipts']);
+  const tx = connection.transaction('receipts', 'readwrite');
+  tx.objectStore('receipts').add({ id: JSON.stringify(['PUSH-A', 'firebase-message-1', 'PUSH_RECEIVED']), pushRef: 'PUSH-A', messageId: 'firebase-message-1', timestamp: '2026-10-02T10:00:00.000Z', status: 'pending', attempts: 0, retryAt: 0, leaseUntil: 0, terminal: false });
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = reject; });
+  connection.close();
+  await f.tracking.queuePushReceipt(payload());
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await f.tracking.flushPushReceipts();
+  assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED']);
+  assert.equal(f.requests[0].body.timestamp, '2026-10-02T10:00:00.000Z');
+});
+
+test('separate contexts cannot send opened while receipt is leased, and diagnostics distinguish sending from accepted', async () => {
+  const db = new IDBFactory(), first = fixture(db), second = fixture(db);
+  await first.tracking.saveReceiptAssociation(association());
+  await first.tracking.queuePushReceipt(payload());
+  let release;
+  first.h.fetch = () => new Promise(resolve => { release = resolve; });
+  const sending = first.tracking.flushPushReceipts();
+  for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const status = await second.tracking.getReceiptDiagnostics();
+  assert.equal(status.events[0].status, 'sending');
+  assert.equal(status.events[0].sent, true);
+  assert.equal(status.events[0].accepted, false);
+  await second.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await second.tracking.flushPushReceipts();
+  assert.equal(second.requests.length, 0);
+  release({ status: 202, json: async () => ({ success: true, uploadAccepted: true }) });
+  await sending;
+  await second.tracking.flushPushReceipts();
+  assert.equal(second.requests[0].body.event, 'PUSH_OPENED');
+});
+
+test('terminal receipt rejection does not cause endless retries or prevent later explicit interactions', async () => {
+  const f = fixture();
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.queuePushReceipt(payload());
+  f.h.response = { status: 403 };
+  await f.tracking.flushPushReceipts();
+  f.h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload());
+  await f.tracking.flushPushReceipts();
+  f.advance(86_400_000);
+  await f.tracking.flushPushReceipts();
+  assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_RECEIVED', 'PUSH_OPENED']);
+});
+
+test('a rejected terminal advanced event is not treated as an accepted state advancement', async () => {
+  const f = fixture();
+  await f.tracking.saveReceiptAssociation(association());
+  await f.tracking.queuePushEvent('PUSH_OPENED', payload());
+  f.h.response = { status: 403 };
+  await f.tracking.flushPushReceipts();
+  await f.tracking.queuePushReceipt(payload());
+  f.h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  await f.tracking.flushPushReceipts();
+  assert.deepEqual(f.requests.map(item => item.body.event), ['PUSH_OPENED', 'PUSH_RECEIVED']);
+});

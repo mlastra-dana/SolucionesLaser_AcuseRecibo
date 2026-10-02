@@ -70,6 +70,14 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; backgroun
 .receipt-diagnostics dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
 .receipt-diagnostics dt { overflow-wrap: anywhere; }
 .receipt-diagnostics dd { margin: 0; }
+.tracking-events { list-style: none; padding: 0; }
+.tracking-events li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; border-top: 1px solid #e1e6ed; padding: 12px 0; }
+.tracking-events li > span { max-width: 120px; text-align: right; overflow-wrap: anywhere; }
+.tracking-events small, .tracking-events time { grid-column: 1 / -1; font-size: 11px; }
+.notification-cta { margin-top: 12px; min-height: 44px; }
+.more-information { max-width: 600px; margin: 24px auto 0; border-top: 1px solid #e1e6ed; padding-top: 20px; }
+.more-information h2 { font-size: 18px; }
+.more-information p { font-size: 13px; line-height: 1.7; }
 .success-panel { text-align: center; }
 .success-icon { display: grid; place-items: center; width: 50px; height: 50px; background: #e7f4ec; color: #27835a; border-radius: 50%; margin: 0 auto 14px; }
 .success-panel h2 { font-size: 23px; font-weight: 600; margin: 0 0 9px; overflow-wrap: anywhere; }

@@ -20,7 +20,7 @@ async function fixture(worker = false, overrides = {}) {
     supported: true, requested: 0, permissionResult: 'granted', token: 'test-fcm-token',
     unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false, requests: [], pageMessages: [],
     response: { ok: true, status: 200, async json() { return { success: true, conversationStarted: true, resultId: 47 }; } },
-    async record(type, context, payload) { h.events.push({ type, context, payload }); }
+    async record(type, context, payload, timestamp, accion) { h.events.push({ type, context, payload, timestamp, accion }); }
   };
   const modules = {
     'firebase/app': 'export const getApps = () => h.apps; export const initializeApp = (config, name = "[DEFAULT]") => { h.initializationCount++; const app = { name, options: config }; h.apps.push(app); return app; };',
@@ -167,7 +167,7 @@ test('data-only background payload shows one notification and remains clickable'
   await completed;
   assert.ok(stopped);
   assert.equal(h.openedUrl, 'https://demo.example/');
-  assert.deepEqual(h.events.map(item => item.type), ['PUSH_RECEIVED', 'PUSH_CLICKED', 'PUSH_OPENED']);
+  assert.deepEqual(h.events.map(item => item.type), ['PUSH_RECEIVED', 'PUSH_OPENED']);
 });
 
 test('automatic FCM notification click normalizes message ID and focuses existing window', async () => {
@@ -182,7 +182,7 @@ test('automatic FCM notification click normalizes message ID and focuses existin
   await completed;
   assert.ok(focused);
   assert.equal(h.events[0].payload.messageId, 'm3');
-  assert.equal(h.events[1].type, 'PUSH_OPENED');
+  assert.equal(h.events[0].type, 'PUSH_OPENED');
 });
 
 test('failed local tracking does not suppress data-only notifications', async () => {
@@ -453,8 +453,8 @@ test('foreground system notification is shown once across concurrent tabs, with 
   await completed;
   assert.equal(closed, true);
   assert.equal(h.openedUrl, 'https://demo.example/');
-  assert.equal(h.events[0].type, 'PUSH_CLICKED');
-  assert.equal(h.events[1].type, 'PUSH_OPENED');
+  assert.equal(h.events[0].type, 'PUSH_OPENED');
+  assert.equal(h.events.length, 1);
   assert.equal(h.events[0].payload.messageId, payload.messageId);
   await foregroundRequest(h, payload);
   assert.equal(h.notices.length, 1);
@@ -509,7 +509,7 @@ test('real onMessage receipt racing register is eventually reported; click callb
   assert.equal(h.requests.length, 2);
 });
 
-test('onBackgroundMessage reports after notification display and click still only affects local history', async () => {
+test('onBackgroundMessage preserves receipt reporting and body interaction reports only opened', async () => {
   const { h, context } = await fixture(true, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
   const request = context.indexedDB.open('dana-push-receipts', 1);
   request.onupgradeneeded = () => {
@@ -534,5 +534,69 @@ test('onBackgroundMessage reports after notification display and click still onl
   let completed;
   h.listeners.notificationclick({ notification: { data: { danaPayload: payload }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
   await completed;
+  assert.equal(h.requests.length, 2);
+  assert.equal(JSON.parse(h.requests[1].options.body).event, 'PUSH_OPENED');
+  assert.equal(JSON.parse(h.requests[1].options.body).accion, '');
+});
+
+async function seedWorkerAssociation(context, pushRef) {
+  const request = context.indexedDB.open('dana-push-receipts', 1);
+  request.onupgradeneeded = () => {
+    request.result.createObjectStore('associations', { keyPath: 'pushRef' });
+    request.result.createObjectStore('receipts', { keyPath: 'id' });
+  };
+  await new Promise((resolve, reject) => { request.onsuccess = resolve; request.onerror = reject; });
+  const db = request.result;
+  const tx = db.transaction('associations', 'readwrite');
+  tx.objectStore('associations').put({ pushRef, eventAuthToken: 'private-test-auth', resultId: 44 });
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = reject; });
+  db.close();
+}
+
+test('system CTA reports opened then clicked, normalizes original FCM identifiers and reuses one app window', async () => {
+  const { h, context } = await fixture(true, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  await seedWorkerAssociation(context, 'PUSH-system-action');
+  let focused = 0, navigated;
+  h.clients = [{ url: 'https://demo.example/?existing=true', postMessage() {}, async navigate(url) { navigated = url; }, async focus() { focused++; return this; } }];
+  h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  const click = async () => {
+    let completed;
+    h.listeners.notificationclick({ action: 'CONOCER_MAS', notification: { data: { FCM_MSG: { fcmMessageId: 'system-action-id', data: { push_ref: 'PUSH-system-action' } } }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+    await completed;
+  };
+  await click();
+  await click();
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_OPENED', 'PUSH_CLICKED']);
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).accion), ['', 'CONOCER_MAS']);
+  assert.equal(JSON.parse(h.requests[1].options.body).messageId, 'system-action-id');
+  assert.equal(navigated, 'https://demo.example/#conocer-mas');
+  assert.equal(focused, 2);
+  assert.equal(h.openedUrl, undefined);
+});
+
+test('system body navigation completes while event network is stalled and failed upload stays independent', async () => {
+  const { h, context } = await fixture(true, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  await seedWorkerAssociation(context, 'PUSH-slow-network');
+  let release, completed;
+  h.fetchHandler = () => new Promise(resolve => { release = resolve; });
+  h.listeners.notificationclick({ action: '', notification: { data: { danaPayload: { messageId: 'slow-network-id', data: { push_ref: 'PUSH-slow-network' } } }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+  for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(h.openedUrl, 'https://demo.example/');
   assert.equal(h.requests.length, 1);
+  release({ status: 503 });
+  await completed;
+  assert.equal(JSON.parse(h.requests[0].options.body).event, 'PUSH_OPENED');
+  assert.deepEqual(h.events.map(item => item.type), ['PUSH_OPENED']);
+});
+
+test('system action button is optional and never required to display on platforms without action support', async () => {
+  const supported = await fixture(true);
+  supported.context.Notification.maxActions = 2;
+  await supported.h.background({ messageId: 'with-action', data: { Titulo: 'DANA PUSH' } });
+  assert.equal(supported.h.notices[0][1].actions[0].action, 'CONOCER_MAS');
+  const fallback = await fixture(true);
+  fallback.context.Notification.maxActions = 0;
+  await fallback.h.background({ messageId: 'without-action', data: { Titulo: 'DANA PUSH' } });
+  assert.equal(fallback.h.notices.length, 1);
+  assert.equal(fallback.h.notices[0][1].actions, undefined);
 });
