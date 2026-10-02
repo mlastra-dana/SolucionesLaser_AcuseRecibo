@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, Bell, BellRing, Check, CheckCircle2, ChevronDown, Clipboard, Code2, Info, LoaderCircle, LockKeyhole, RefreshCw, Trash2, UserRound, X } from 'lucide-react';
 import type { MessagePayload } from 'firebase/messaging';
 import { getPushDiagnostics, listenForPushMessages, registerPushBrowser, type PushDiagnostics } from '../services/pushService';
-import { registerPushVisitor, validateVisitorDetails, type DanaRegistrationResult, type PushVisitor } from '../services/danaService';
+import { registerPushVisitor, type DanaRegistrationResult, type PushVisitor } from '../services/danaService';
 import { clearPushEvents, getMessageDetails, readPushEvents, recordPushEvent, type ObservedNotification, type PushEvent } from './eventStore';
 import { getFirebaseConfig } from './firebaseConfig';
 import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } from '../services/pushCapabilities';
@@ -25,8 +25,9 @@ export default function PushExperience() {
   const [fcmToken, setFcmToken] = useState('');
   const [danaResult, setDanaResult] = useState<DanaRegistrationResult | null>(null);
   const [error, setError] = useState('');
-  const [invalidField, setInvalidField] = useState<'nombre' | 'email' | 'telefono' | null>(null);
   const [visitor, setVisitor] = useState<PushVisitor | null>(null);
+  const [resendConfirmed, setResendConfirmed] = useState(false);
+  const [resendError, setResendError] = useState('');
   const [events, setEvents] = useState<PushEvent[]>([]);
   const [historyError, setHistoryError] = useState('');
   const [latest, setLatest] = useState<MessagePayload | null>(null);
@@ -120,15 +121,7 @@ export default function PushExperience() {
     if (submitting.current) return;
     setStage('Validando información');
     setError('');
-    setInvalidField(null);
     const details = { nombre: nombre.trim(), email: email.trim(), telefono: telefono.trim() };
-    const invalid = validateVisitorDetails(details);
-    if (invalid) {
-      setInvalidField(invalid.field);
-      setError(invalid.message);
-      document.getElementById(invalid.field)?.focus();
-      return;
-    }
     if (!consent) { setError('Acepta recibir una notificación de prueba para continuar.'); return; }
     if (!pwa.online) { setError('Conéctate a Internet para registrar el navegador y generar tu token.'); return; }
     submitting.current = true;
@@ -174,17 +167,28 @@ export default function PushExperience() {
     } catch { setCopyError('No pudimos copiar el token. Selecciona el texto y cópialo desde el campo.'); }
   }
 
-  function reset() {
-    if (submitting.current) return;
-    listenerGeneration.current++;
-    stop.current?.();
-    stop.current = null;
-    setVisitor(null); setNombre(''); setEmail(''); setTelefono(''); setConsent(false);
-    setFcmToken(''); setDanaResult(null); setStage(null);
-    setInvalidField(null);
-    setError(''); setLatest(null); setCopied(false); setCopyError('');
-    setLatestTimestamp('');
-    window.setTimeout(() => nameInput.current?.focus(), 0);
+  async function resend() {
+    if (!visitor || submitting.current) return;
+    submitting.current = true;
+    setBusy(true);
+    setResendError('');
+    setResendConfirmed(false);
+    setDanaResult(null);
+    try {
+      if (!pwa.online) throw new Error('Conéctate a Internet para reenviar la notificación.');
+      if ('Notification' in window && Notification.permission !== 'granted') {
+        throw new Error('Habilita las notificaciones en los ajustes del sitio antes de reenviar.');
+      }
+      const result = await registerPushVisitor(visitor);
+      if (!mounted.current) return;
+      setDanaResult(result);
+      setResendConfirmed(true);
+    } catch (cause) {
+      if (mounted.current) setResendError(cause instanceof Error ? cause.message : 'No pudimos solicitar el reenvío. Revisa tu conexión.');
+    } finally {
+      submitting.current = false;
+      if (mounted.current) { setBusy(false); void refreshDiagnostics(); }
+    }
   }
 
   async function openMessage() {
@@ -249,9 +253,9 @@ export default function PushExperience() {
                 <div className="panel-heading"><span className="panel-icon"><UserRound size={20} /></span><div><h2>Tu experiencia comienza aquí</h2><p>Prepara tu navegador para tu primera notificación.</p></div></div>
                 <fieldset disabled={busy}>
                   <div className="name-fields">
-                    <label className="full-width-field" htmlFor="nombre">Nombre completo <span aria-hidden="true">*</span><input ref={nameInput} id="nombre" name="nombre" autoComplete="name" maxLength={120} required value={nombre} onChange={event => setNombre(event.target.value)} placeholder="Tu nombre completo" aria-invalid={invalidField === 'nombre'} aria-describedby={invalidField === 'nombre' ? 'registration-error' : undefined} /></label>
-                    <label htmlFor="email">Email <span aria-hidden="true">*</span><input id="email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} required value={email} onChange={event => setEmail(event.target.value)} placeholder="nombre@empresa.com" aria-invalid={invalidField === 'email'} aria-describedby={invalidField === 'email' ? 'registration-error' : undefined} /></label>
-                    <label htmlFor="telefono">Teléfono con código de país <span aria-hidden="true">*</span><input id="telefono" name="telefono" type="tel" autoComplete="tel" maxLength={16} required value={telefono} onChange={event => setTelefono(event.target.value)} placeholder="+584121234567" aria-invalid={invalidField === 'telefono'} aria-describedby={invalidField === 'telefono' ? 'registration-error' : undefined} /></label>
+                    <label className="full-width-field" htmlFor="nombre">Nombre completo<input ref={nameInput} id="nombre" name="nombre" autoComplete="name" maxLength={120} value={nombre} onChange={event => setNombre(event.target.value)} placeholder="Tu nombre completo" /></label>
+                    <label htmlFor="email">Email<input id="email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} maxLength={254} value={email} onChange={event => setEmail(event.target.value)} placeholder="nombre@empresa.com" /></label>
+                    <label htmlFor="telefono">Teléfono<input id="telefono" name="telefono" type="tel" autoComplete="tel" value={telefono} onChange={event => setTelefono(event.target.value)} placeholder="Tu teléfono" /></label>
                   </div>
                   <label className="consent" htmlFor="consent"><input id="consent" type="checkbox" required checked={consent} onChange={event => setConsent(event.target.checked)} /><span>Acepto recibir una notificación de prueba en este navegador</span></label>
                   {error && <div id="registration-error" className="error-message" role="alert"><Info size={18} /><span>{error}</span></div>}
@@ -261,13 +265,15 @@ export default function PushExperience() {
                 <p className="privacy-note"><LockKeyhole size={13} /> Tus datos se usan únicamente para esta demostración.</p>
               </form>
             ) : (
-              <div className="success-panel">
+              <div className="success-panel" aria-busy={busy}>
                 <div className="success-icon"><Check size={27} /></div>
-                <h2 ref={successTitle} tabIndex={-1}>¡Todo listo, {visitor.nombre}!</h2>
-                <p>Tu registro se procesó correctamente. DANAconnect está preparando tu primera notificación Push.</p>
+                <h2 ref={successTitle} tabIndex={-1}>{visitor.nombre ? `¡Todo listo, ${visitor.nombre}!` : '¡Todo listo!'}</h2>
+                <p>Tu registro se procesó correctamente. Puedes solicitar otra notificación Push con los mismos datos.</p>
                 <ul className="status-list">{['Navegador compatible', 'Notificaciones habilitadas', 'Firebase conectado', 'Token generado'].map(label => <li key={label}><CheckCircle2 size={17} />{label}</li>)}</ul>
-                <div className="ready-status" role="status"><CheckCircle2 size={15} /> Registro completado</div>
-                <button className="text-button reset-button" onClick={reset}><RefreshCw size={15} /> Reiniciar formulario</button>
+                <div className="ready-status" role="status"><CheckCircle2 size={15} />{resendConfirmed ? 'Reenvío solicitado' : 'Registro completado'}</div>
+                {resendError && <div className="error-message" role="alert"><Info size={18} /><span>{resendError}</span></div>}
+                <button className="secondary-button resend-button" disabled={busy} onClick={() => void resend()}>{busy ? <LoaderCircle className="spin" size={17} /> : <RefreshCw size={17} />}{busy ? 'Solicitando reenvío…' : 'Reenviar notificación'}</button>
+                {busy && <p className="registration-progress" role="status">Enviando información a DANAconnect…</p>}
               </div>
             )}
           </div>
@@ -291,7 +297,7 @@ export default function PushExperience() {
                 <dt>Soporte Firebase Messaging</dt><dd>{capabilities ? (capabilities.firebase ? 'Disponible' : 'No disponible') : 'Comprobando'}</dd>
               </dl>
               <p><strong>Token FCM:</strong> {fcmToken ? 'Generado por Firebase para este navegador y origen.' : 'Pendiente de registro.'}</p>
-              {fcmToken && <><label className="token-label" htmlFor="token">Token del navegador</label><textarea id="token" readOnly value={fcmToken} rows={3} spellCheck={false} /><div className="diagnostic-actions"><button className="secondary-button" onClick={() => void copyToken()}>{copied ? <Check size={15} /> : <Clipboard size={15} />}{copied ? 'Token copiado' : 'Copiar token'}</button><button className="icon-button" title="Reiniciar formulario" aria-label="Reiniciar formulario" disabled={busy} onClick={reset}><RefreshCw size={16} /></button></div>{copyError && <p role="alert">{copyError}</p>}</>}
+              {fcmToken && <><label className="token-label" htmlFor="token">Token del navegador</label><textarea id="token" readOnly value={fcmToken} rows={3} spellCheck={false} /><div className="diagnostic-actions"><button className="secondary-button" onClick={() => void copyToken()}>{copied ? <Check size={15} /> : <Clipboard size={15} />}{copied ? 'Token copiado' : 'Copiar token'}</button></div>{copyError && <p role="alert">{copyError}</p>}</>}
               <p>Start Conversation: {danaResult ? 'inicio confirmado por Lambda; no confirma entrega del Push.' : import.meta.env.VITE_DANA_PUSH_API_URL ? 'sin confirmación de inicio.' : 'sin URL de Lambda configurada.'}</p>
               {danaResult?.resultId !== undefined && <p>Result ID: {danaResult.resultId}</p>}
               <h3>Último mensaje recibido</h3>
@@ -300,7 +306,7 @@ export default function PushExperience() {
               {historyError && <p role="status">{historyError}</p>}
               {events.map(item => <details className="event-row" key={item.id}><summary><span>{item.type}</span><small>{item.context === 'foreground' ? 'Primer plano' : 'Segundo plano'} · {new Date(item.timestamp).toLocaleTimeString('es')}</small></summary><p>Message ID: {item.messageId || 'No disponible'}</p><p>{item.timestamp}</p><pre>{JSON.stringify(item.payload, null, 2)}</pre></details>)}
               {lastPayload && events.length === 0 && <pre>{JSON.stringify(lastPayload, null, 2)}</pre>}
-              <p className="diagnostic-footnote">Historial local de hasta 50 eventos. Abrir una notificación no confirma su lectura. Reiniciar el formulario no revoca el permiso del navegador.</p>
+              <p className="diagnostic-footnote">Historial local de hasta 50 eventos. Abrir una notificación no confirma su lectura. Reenviar reutiliza los datos y el token del registro actual.</p>
             </div>
           </details>}
         </section>

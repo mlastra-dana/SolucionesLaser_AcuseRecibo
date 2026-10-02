@@ -33,7 +33,7 @@ Crea `.env.local` a partir de los nombres en `.env.example` o configúralos para
 | `VITE_DANA_PUSH_API_URL` | URL HTTPS de la Lambda existente para el registro automático |
 | `VITE_PUSH_DEMO_MODE` | `true` para diagnóstico; `false` para ocultarlo |
 
-Se validan los datos y la configuración antes de pedir permiso. El formulario usa un único nombre completo (máximo de 120 caracteres), email y teléfono obligatorios. El teléfono acepta entre 7 y 15 dígitos con + inicial opcional, sin separadores; esta comprobación no verifica titularidad ni existencia del contacto. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento, y no se vuelve a pedir si ya está concedido. El frontend envía nombre, email, teléfono y token a la Lambda configurada para iniciar la conversación DANA. No persiste los contactos ni el token en el historial local y no genera tokens simulados.
+Nombre completo, email y teléfono son opcionales en la demo. El teléfono se envía como texto libre, sin límites de longitud ni restricciones de formato en el frontend; los campos omitidos se envían como cadenas vacías. El consentimiento y un token Firebase real siguen siendo necesarios. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento, y no se vuelve a pedir si ya está concedido. El frontend envía nombre, email, teléfono y token a la Lambda configurada para iniciar la conversación DANA. No persiste los contactos ni el token en el historial local y no genera tokens simulados. Si el backend exige datos o formatos, su validación también deberá ajustarse; no se modificó la Lambda.
 
 ## AWS Amplify
 
@@ -62,7 +62,7 @@ Para la versión actual no es necesario copiar tokens ni ejecutar Lambda Test: s
 
 Al recargar una landing ya autorizada, el listener foreground se reconecta sin solicitar permiso ni generar un token nuevo. El worker activa la configuración del despliegue nuevo usando `skipWaiting` y `clients.claim`; el registro espera esa activación cuando hay una actualización.
 
-La configuración del sistema operativo puede silenciar las notificaciones aun con permiso concedido. El soporte depende del navegador y del dispositivo; el flujo no promete compatibilidad universal. Reiniciar el formulario no revoca el permiso ni elimina la suscripción FCM. Para revocarlo, usa los permisos del sitio.
+La configuración del sistema operativo puede silenciar las notificaciones aun con permiso concedido. El soporte depende del navegador y del dispositivo; el flujo no promete compatibilidad universal. Reenviar notificación vuelve a solicitar el envío a Lambda con los mismos datos y token, sin borrar el historial ni generar otra suscripción. Para revocar el permiso, usa los permisos del sitio.
 
 ## Eventos y diagnóstico
 

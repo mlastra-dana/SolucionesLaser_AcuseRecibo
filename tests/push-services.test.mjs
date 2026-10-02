@@ -90,19 +90,14 @@ test('FCM registration uses permission, explicit worker and VAPID, with no DANA 
   assert.equal(h.requests.length, 0);
 });
 
-test('visitor details use one full name plus email and telephone, without external calls', async () => {
-  const { context } = await fixture();
-  const details = { nombre: '  Demo Nombre Completo  ', email: '  demo@example.com  ', telefono: ' +584121234567 ' };
-  assert.equal(context.dana.validateVisitorDetails(details), null);
-  for (const [field, value] of [
-    ['nombre', ''], ['nombre', 'a'.repeat(121)],
-    ['email', ''], ['email', 'demo'], ['email', 'demo @example.com'],
-    ['telefono', ''], ['telefono', '123'], ['telefono', 'abc1234567'],
-    ['telefono', '+1234567890123456'], ['telefono', '+58 412 123 4567'], ['telefono', '+58(412)1234567']
-  ]) {
-    const invalid = { ...details, [field]: value };
-    assert.equal(context.dana.validateVisitorDetails(invalid).field, field);
-    await assert.rejects(context.dana.registerPushVisitor({ ...invalid, token: 'test' }));
+test('contact fields are optional and telephone is forwarded without format restrictions', async () => {
+  const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  const details = { nombre: '', email: '', telefono: '' };
+  assert.equal((await context.dana.registerPushVisitor({ ...details, token: 'test' })).success, true);
+  assert.deepEqual(JSON.parse(h.requests[0].options.body), { NOMBRE: '', EMAIL: '', TELEFONO: '', TOKEN: 'test' });
+  for (const phone of ['123', '+58 412 123 4567', '(412) 123-4567', '  teléfono libre  ', '+12345678901234567890']) {
+    await context.dana.registerPushVisitor({ ...details, telefono: phone, token: 'test' });
+    assert.equal(JSON.parse(h.requests.at(-1).options.body).TELEFONO, phone.trim());
   }
   await assert.rejects(context.dana.registerPushVisitor({ ...details, token: '' }), /token FCM/);
 });

@@ -1,19 +1,6 @@
 export type PushVisitor = { nombre: string; email: string; telefono: string; token: string };
 export type DanaVisitorPayload = PushVisitor;
 
-export function validateVisitorDetails(payload: Pick<PushVisitor, 'nombre' | 'email' | 'telefono'>) {
-  if (!payload.nombre.trim() || payload.nombre.trim().length > 120) {
-    return { field: 'nombre' as const, message: 'Introduce tu nombre completo (hasta 120 caracteres).' };
-  }
-  if (payload.email.trim().length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email.trim())) {
-    return { field: 'email' as const, message: 'Introduce un email válido.' };
-  }
-  if (!/^\+?\d{7,15}$/.test(payload.telefono.trim())) {
-    return { field: 'telefono' as const, message: 'Introduce el teléfono con código de país: de 7 a 15 dígitos, sin espacios, con + inicial opcional.' };
-  }
-  return null;
-}
-
 export type DanaErrorCode = 'configuration' | 'unavailable' | 'http' | 'response' | 'conversation' | 'network' | 'timeout';
 export class DanaRegistrationError extends Error {
   constructor(public readonly code: DanaErrorCode, message: string) { super(message); this.name = 'DanaRegistrationError'; }
@@ -23,8 +10,6 @@ export type DanaRegistrationResult = { success: true; conversationStarted: true;
 const uncertainResult = 'El registro podría haberse procesado. Comprueba si llegó la notificación antes de reintentar para evitar duplicados.';
 
 export async function registerPushVisitor(payload: DanaVisitorPayload) {
-  const invalid = validateVisitorDetails(payload);
-  if (invalid) throw new Error(invalid.message);
   if (!payload.token.trim()) throw new Error('El registro requiere un token FCM.');
   let endpoint: URL;
   try {
