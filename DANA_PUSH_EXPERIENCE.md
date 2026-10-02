@@ -72,7 +72,7 @@ La configuración del sistema operativo puede silenciar las notificaciones aun c
 - `src/push/eventStore.ts` es el punto desacoplado para el futuro transporte de eventos. Los eventos siguen siendo locales; el único POST a AWS es el registro explícito del visitante en Lambda.
 - Se mantienen hasta 50 eventos/payloads en IndexedDB **local del navegador**, incluso cuando la pestaña estaba cerrada. No es un almacenamiento público ni un registro de visitantes. Se deduplican por tipo y message ID si está presente. Sin ID no se puede garantizar deduplicación de reenvíos. Se pueden borrar desde Mis notificaciones.
 - No se generan confirmaciones de entrega o lectura. El historial puede no estar disponible en modo privado y se pierde si se borran los datos del sitio. Evita enviar datos sensibles en los payloads de la demo.
-- El diagnóstico técnico y la copia del token ya no aparecen en la vista. Los requisitos de configuración del cliente quedan en `DANA_PUSH_INTEGRATION.md`. `VITE_PUSH_DEMO_MODE=false` oculta el historial, no constituye una autorización ni un control de seguridad.
+- El diagnóstico técnico anterior y la copia del token ya no aparecen en la vista. La fase de recepción agrega solo cuatro indicadores de tracking, sin tokens. Los requisitos del cliente quedan en `DANA_PUSH_INTEGRATION.md`; persistencia y reportes de recepción en `DANA_PUSH_RECEIPTS.md`. `VITE_PUSH_DEMO_MODE=false` oculta el historial y estos indicadores, no constituye una autorización ni un control de seguridad.
 
 ## Archivos y dependencias
 

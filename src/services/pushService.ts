@@ -2,6 +2,7 @@ import { getApps, initializeApp } from 'firebase/app';
 import { getMessaging, getToken, isSupported, onMessage, type MessagePayload } from 'firebase/messaging';
 import { validateFirebaseConfig } from '../push/firebaseConfig';
 import { recordPushEvent } from '../push/eventStore';
+import { queuePushReceipt, flushPushReceipts } from '../push/receiptTracking';
 import { registerSharedWorker } from './serviceWorkerService';
 import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } from './pushCapabilities';
 
@@ -17,6 +18,8 @@ function getPushMessaging() {
 function subscribe(onPayload: (payload: MessagePayload) => void) {
   return onMessage(getPushMessaging(), async payload => {
     if ((payload as MessagePayload & { messageType?: string }).messageType === 'notification-clicked') return;
+    const receivedAt = new Date().toISOString();
+    await queuePushReceipt(payload as unknown as Record<string, unknown>, receivedAt).catch(() => {});
     await recordPushEvent('PUSH_RECEIVED', 'foreground', payload as unknown as Record<string, unknown>).catch(() => {});
     onPayload(payload);
     if (Notification.permission === 'granted') {
@@ -26,6 +29,7 @@ function subscribe(onPayload: (payload: MessagePayload) => void) {
         registration.active?.postMessage({ source: 'DANA_PUSH_PAGE', type: 'SHOW_FOREGROUND_NOTIFICATION', payload });
       } catch { /* Keep the observed message available in the app if system display is unavailable. */ }
     }
+    void flushPushReceipts().catch(() => {});
   });
 }
 

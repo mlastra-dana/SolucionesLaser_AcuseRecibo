@@ -1,12 +1,14 @@
+import { flushPushReceipts, saveReceiptAssociation } from '../push/receiptTracking';
+
 export type PushVisitor = { nombre: string; email: string; telefono: string; token: string };
 export type DanaVisitorPayload = PushVisitor;
 
-export type DanaErrorCode = 'configuration' | 'unavailable' | 'http' | 'response' | 'conversation' | 'network' | 'timeout';
+export type DanaErrorCode = 'configuration' | 'unavailable' | 'http' | 'response' | 'conversation' | 'network' | 'timeout' | 'tracking';
 export class DanaRegistrationError extends Error {
   constructor(public readonly code: DanaErrorCode, message: string) { super(message); this.name = 'DanaRegistrationError'; }
 }
 
-export type DanaRegistrationResult = { success: true; conversationStarted: true; resultId?: string | number };
+export type DanaRegistrationResult = { success: true; conversationStarted: true; resultId?: string | number; pushRef?: string; eventAuthToken?: string };
 const uncertainResult = 'El registro podría haberse procesado. Comprueba si llegó la notificación antes de reintentar para evitar duplicados.';
 
 export async function registerPushVisitor(payload: DanaVisitorPayload) {
@@ -44,10 +46,21 @@ export async function registerPushVisitor(payload: DanaVisitorPayload) {
     }
     if (!isRecord(result) || result.success !== true) throw new DanaRegistrationError('response', 'Lambda no confirmó un registro exitoso.');
     if (result.conversationStarted !== true) throw new DanaRegistrationError('conversation', 'DANAconnect no confirmó el inicio de la conversación. No se confirmó el envío.');
-    return {
+    const registration: DanaRegistrationResult = {
       success: true, conversationStarted: true,
-      resultId: typeof result.resultId === 'string' || typeof result.resultId === 'number' ? result.resultId : undefined
-    } satisfies DanaRegistrationResult;
+      resultId: typeof result.resultId === 'string' || typeof result.resultId === 'number' ? result.resultId : undefined,
+      pushRef: typeof result.pushRef === 'string' && result.pushRef.trim() ? result.pushRef : undefined,
+      eventAuthToken: typeof result.eventAuthToken === 'string' && result.eventAuthToken.trim() ? result.eventAuthToken : undefined
+    };
+    if (registration.pushRef && registration.eventAuthToken) {
+      try {
+        await saveReceiptAssociation({ pushRef: registration.pushRef, eventAuthToken: registration.eventAuthToken, resultId: registration.resultId });
+      } catch {
+        throw new DanaRegistrationError('tracking', 'El registro fue aceptado, pero no pudimos guardar su asociación de recepción. No vuelvas a registrarte para evitar duplicados.');
+      }
+      void flushPushReceipts().catch(() => {});
+    }
+    return registration;
   } catch (error) {
     if (controller.signal.aborted) throw new DanaRegistrationError('timeout', `Lambda tardó demasiado en responder. ${uncertainResult}`);
     if (error instanceof DanaRegistrationError) throw error;

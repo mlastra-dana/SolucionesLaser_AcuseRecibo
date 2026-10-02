@@ -3,6 +3,7 @@ import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
 import { getFirebaseConfig } from './firebaseConfig';
 import { recordPushEvent } from './eventStore';
 import { normalizeNotification } from './normalizeNotification';
+import { queuePushReceipt, flushPushReceipts } from './receiptTracking';
 import { setCacheNameDetails } from 'workbox-core';
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
@@ -101,10 +102,15 @@ const config = getFirebaseConfig();
 if (config.apiKey && config.projectId === 'dana-push-demo-vzla' && config.appId && config.messagingSenderId) {
   const messaging = getMessaging(initializeApp(config));
   onBackgroundMessage(messaging, async payload => {
+    const receivedAt = new Date().toISOString();
+    const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
+    await queuePushReceipt(normalized, receivedAt).catch(() => {});
     await track('PUSH_RECEIVED', payload);
     // Firebase displays notification payloads automatically. Only render data-only messages ourselves.
     if (!payload.notification) {
       await showObservedNotification(payload);
     }
+    // Keep the worker alive for reporting, after preserving the existing notification display.
+    await flushPushReceipts().catch(() => {});
   });
 }

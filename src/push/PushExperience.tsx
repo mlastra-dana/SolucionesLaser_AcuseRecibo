@@ -8,6 +8,7 @@ import { getPushCapabilities, pushUnavailableMessage, type PushCapabilities } fr
 import { usePwa } from './usePwa';
 import InstallExperience from './InstallExperience';
 import NotificationsHistory from './NotificationsHistory';
+import { flushPushReceipts, getReceiptDiagnostics, nextReceiptAttempt, type ReceiptDiagnostics } from './receiptTracking';
 
 const demoMode = import.meta.env.VITE_PUSH_DEMO_MODE !== 'false';
 type RegistrationStage = 'Validando información' | 'Conectando con Firebase' | 'Registrando dispositivo' | 'Enviando información a DANAconnect' | 'Preparando notificación' | 'Registro completado';
@@ -28,6 +29,8 @@ export default function PushExperience() {
   const [resendError, setResendError] = useState('');
   const [events, setEvents] = useState<PushEvent[]>([]);
   const [historyError, setHistoryError] = useState('');
+  const [receiptDiagnostics, setReceiptDiagnostics] = useState<ReceiptDiagnostics | null>(null);
+  const [receiptStorageError, setReceiptStorageError] = useState(false);
   const [latest, setLatest] = useState<MessagePayload | null>(null);
   const [latestTimestamp, setLatestTimestamp] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -61,6 +64,52 @@ export default function PushExperience() {
   async function refreshCapabilities() {
     setCapabilities(await getPushCapabilities());
   }
+
+  const refreshReceiptDiagnostics = useCallback(async () => {
+    try {
+      const status = await getReceiptDiagnostics();
+      if (mounted.current) { setReceiptDiagnostics(status); setReceiptStorageError(false); }
+    } catch { if (mounted.current) setReceiptStorageError(true); }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false, revision = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = () => {
+      void refreshReceiptDiagnostics();
+      const current = ++revision;
+      clearTimeout(retryTimer);
+      if (!navigator.onLine || document.visibilityState !== 'visible') return;
+      void nextReceiptAttempt().then(at => {
+        if (cancelled || current !== revision || at === null) return;
+        retryTimer = setTimeout(resume, Math.max(1000, at - Date.now()));
+      }).catch(() => {});
+    };
+    const resume = () => {
+      refresh();
+      if (navigator.onLine) void flushPushReceipts().catch(() => {}).finally(refresh);
+    };
+    const pause = () => { ++revision; clearTimeout(retryTimer); };
+    const visible = () => { if (document.visibilityState === 'visible') resume(); else pause(); };
+    let channel: BroadcastChannel | null = null;
+    try { if (typeof BroadcastChannel !== 'undefined') channel = new BroadcastChannel('dana-receipt-status'); }
+    catch { /* Visibility and online signals still resume receipts in restricted browser contexts. */ }
+    if (channel) channel.onmessage = refresh;
+    window.addEventListener('dana-receipt-change', refresh);
+    window.addEventListener('online', resume);
+    window.addEventListener('offline', pause);
+    document.addEventListener('visibilitychange', visible);
+    resume();
+    return () => {
+      cancelled = true;
+      clearTimeout(retryTimer);
+      channel?.close();
+      window.removeEventListener('dana-receipt-change', refresh);
+      window.removeEventListener('online', resume);
+      window.removeEventListener('offline', pause);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [refreshReceiptDiagnostics]);
 
   const receivePayload = useCallback((payload: MessagePayload) => {
     if (!mounted.current) return;
@@ -251,6 +300,16 @@ export default function PushExperience() {
 
           {historyError && <p className="history-error" role="status">{historyError}</p>}
           {demoMode && <NotificationsHistory events={events} onOpen={message => void openHistoryMessage(message)} onRefresh={() => void refreshEvents()} onClear={clearHistory} />}
+
+          {demoMode && <details className="receipt-diagnostics">
+            <summary>Información de diagnóstico</summary>
+            <dl>
+              <dt>PushRef asociado</dt><dd>{receiptDiagnostics?.associated ? 'Sí' : 'No'}</dd>
+              <dt>Último evento</dt><dd>{receiptDiagnostics?.lastEvent ?? '—'}</dd>
+              <dt>Envío a Lambda</dt><dd>{receiptStorageError ? 'error' : receiptDiagnostics?.status === 'accepted' ? 'aceptado' : receiptDiagnostics?.status === 'error' ? 'error' : receiptDiagnostics?.status === 'pending' ? 'pendiente' : '—'}</dd>
+              <dt>Cantidad de eventos pendientes</dt><dd>{receiptDiagnostics?.pending ?? 0}</dd>
+            </dl>
+          </details>}
 
         </section>
 

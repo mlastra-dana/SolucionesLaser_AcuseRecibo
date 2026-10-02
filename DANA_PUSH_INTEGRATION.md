@@ -1,5 +1,7 @@
 # Registro Automatico y Notificaciones DANA
 
+Fase actual: [tracking real de recepcion](DANA_PUSH_RECEIPTS.md). Se agrega un diagnostico minimo, sin recuperar el panel tecnico anterior. El endpoint ahora recibe tambien `action=event`, exclusivamente para PUSH_RECEIVED asociado a registros de la PWA.
+
 Cambios locales en `dana-push-experience`. No se han modificado AWS, DANAconnect, variables publicadas, manifest, iconos, VAPID ni IDs Firebase. No se hizo deploy. El usuario confirma que la version anterior recibe Push en Chrome y PWA iPhone; esta nueva version requiere prueba real posterior a la publicacion.
 
 ## Dos Ajustes

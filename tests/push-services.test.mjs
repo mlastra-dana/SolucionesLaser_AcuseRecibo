@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { build } from 'esbuild';
+import { IDBFactory } from 'fake-indexeddb';
+import { webcrypto } from 'node:crypto';
 
 const config = {
   VITE_FIREBASE_API_KEY: 'test-public-api-key',
@@ -48,7 +50,7 @@ async function fixture(worker = false, overrides = {}) {
   });
   const notification = { permission: 'default', requestPermission: async () => { h.requested++; notification.permission = h.permissionResult; return h.permissionResult; } };
   const context = vm.createContext({
-    h, console, setTimeout, clearTimeout, URL, AbortController,
+    h, console, setTimeout, clearTimeout, URL, AbortController, indexedDB: new IDBFactory(), crypto: webcrypto,
     fetch: async (url, options) => { h.requests.push({ url, options }); if (h.fetchHandler) return h.fetchHandler(url, options); return h.response; },
     Notification: notification,
     window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout, matchMedia: () => ({ matches: h.standalone }) },
@@ -486,4 +488,51 @@ test('foreground display failure keeps receipt handling intact and does not mark
   await foregroundRequest(worker.h, payload);
   assert.equal(worker.h.notices.length, 1);
   assert.equal(worker.h.events.length, 0);
+});
+
+test('real onMessage receipt racing register is eventually reported; click callbacks never report receipts', async () => {
+  const { h, context } = await fixture(false, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  await context.api.registerPushBrowser(() => {});
+  const payload = { messageId: 'real-foreground-fixture', data: { push_ref: 'PUSH-foreground-fixture' } };
+  await h.foreground(payload);
+  assert.equal(h.requests.length, 0);
+  h.fetchHandler = async (_url, options) => JSON.parse(options.body).action === 'event'
+    ? { status: 202, json: async () => ({ success: true, uploadAccepted: true }) }
+    : { ok: true, status: 200, json: async () => ({ success: true, conversationStarted: true, pushRef: payload.data.push_ref, eventAuthToken: 'private-test-auth', resultId: 99 }) };
+  await context.dana.registerPushVisitor({ nombre: '', email: '', telefono: '', token: 'test-token' });
+  for (let i = 0; i < 100 && h.requests.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const report = JSON.parse(h.requests[1].options.body);
+  assert.equal(report.event, 'PUSH_RECEIVED');
+  assert.equal(report.messageId, payload.messageId);
+  assert.equal(report.push_ref, payload.data.push_ref);
+  await h.foreground({ ...payload, messageType: 'notification-clicked' });
+  assert.equal(h.requests.length, 2);
+});
+
+test('onBackgroundMessage reports after notification display and click still only affects local history', async () => {
+  const { h, context } = await fixture(true, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
+  const request = context.indexedDB.open('dana-push-receipts', 1);
+  request.onupgradeneeded = () => {
+    request.result.createObjectStore('associations', { keyPath: 'pushRef' });
+    request.result.createObjectStore('receipts', { keyPath: 'id' });
+  };
+  await new Promise((resolve, reject) => { request.onsuccess = resolve; request.onerror = reject; });
+  const db = request.result;
+  const tx = db.transaction('associations', 'readwrite');
+  tx.objectStore('associations').put({ pushRef: 'PUSH-background-fixture', eventAuthToken: 'private-test-auth', resultId: 44 });
+  await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = reject; });
+  db.close();
+  h.fetchHandler = async () => {
+    assert.equal(h.notices.length, 1);
+    return { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  };
+  const payload = { messageId: 'background-fcm-id', data: { push_ref: 'PUSH-background-fixture', Titulo: 'DANA PUSH' } };
+  await h.background(payload);
+  await h.background(payload);
+  assert.equal(h.requests.length, 1);
+  assert.equal(JSON.parse(h.requests[0].options.body).event, 'PUSH_RECEIVED');
+  let completed;
+  h.listeners.notificationclick({ notification: { data: { danaPayload: payload }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+  await completed;
+  assert.equal(h.requests.length, 1);
 });
