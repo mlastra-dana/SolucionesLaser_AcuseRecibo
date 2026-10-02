@@ -31,7 +31,7 @@ Crea `.env.local` a partir de los nombres en `.env.example` o configúralos para
 | `VITE_FIREBASE_MEASUREMENT_ID` | Opcional; Analytics no se inicializa |
 | `VITE_FIREBASE_VAPID_KEY` | Clave **pública** Web Push de Cloud Messaging |
 | `VITE_DANA_PUSH_API_URL` | URL HTTPS de la Lambda existente para el registro automático |
-| `VITE_PUSH_DEMO_MODE` | `true` para diagnóstico; `false` para ocultarlo |
+| `VITE_PUSH_DEMO_MODE` | `true` para mostrar Mis notificaciones; `false` para ocultar el historial |
 
 Nombre completo, email y teléfono son opcionales en la demo. El teléfono se envía como texto libre, sin límites de longitud ni restricciones de formato en el frontend; los campos omitidos se envían como cadenas vacías. El consentimiento y un token Firebase real siguen siendo necesarios. El permiso solo se solicita tras enviar el formulario y aceptar el consentimiento, y no se vuelve a pedir si ya está concedido. El frontend envía nombre, email, teléfono y token a la Lambda configurada para iniciar la conversación DANA. No persiste los contactos ni el token en el historial local y no genera tokens simulados. Si el backend exige datos o formatos, su validación también deberá ajustarse; no se modificó la Lambda.
 
@@ -64,15 +64,15 @@ Al recargar una landing ya autorizada, el listener foreground se reconecta sin s
 
 La configuración del sistema operativo puede silenciar las notificaciones aun con permiso concedido. El soporte depende del navegador y del dispositivo; el flujo no promete compatibilidad universal. Reenviar notificación vuelve a solicitar el envío a Lambda con los mismos datos y token, sin borrar el historial ni generar otra suscripción. Para revocar el permiso, usa los permisos del sitio.
 
-## Eventos y diagnóstico
+## Eventos e Historial
 
 - `PUSH_RECEIVED`: callback observable de Firebase, con contexto foreground/background.
 - `PUSH_CLICKED`: clic real en la notificación del sistema o en Abrir mensaje del banner.
 - `PUSH_OPENED`: apertura del contenido del banner o foco/apertura de la ventana tras el clic. **No equivale a lectura**.
 - `src/push/eventStore.ts` es el punto desacoplado para el futuro transporte de eventos. Los eventos siguen siendo locales; el único POST a AWS es el registro explícito del visitante en Lambda.
-- Se mantienen hasta 50 eventos/payloads en IndexedDB **local del navegador**, para conservar diagnósticos incluso cuando la pestaña estaba cerrada. No es un almacenamiento público ni un registro de visitantes. Se deduplican por tipo y message ID si está presente. Sin ID no se puede garantizar deduplicación de reenvíos. Se pueden borrar desde el diagnóstico.
+- Se mantienen hasta 50 eventos/payloads en IndexedDB **local del navegador**, incluso cuando la pestaña estaba cerrada. No es un almacenamiento público ni un registro de visitantes. Se deduplican por tipo y message ID si está presente. Sin ID no se puede garantizar deduplicación de reenvíos. Se pueden borrar desde Mis notificaciones.
 - No se generan confirmaciones de entrega o lectura. El historial puede no estar disponible en modo privado y se pierde si se borran los datos del sitio. Evita enviar datos sensibles en los payloads de la demo.
-- `VITE_PUSH_DEMO_MODE=false` oculta el panel, no constituye una autorización ni un control de seguridad.
+- El diagnóstico técnico y la copia del token ya no aparecen en la vista. Los requisitos de configuración del cliente quedan en `DANA_PUSH_INTEGRATION.md`. `VITE_PUSH_DEMO_MODE=false` oculta el historial, no constituye una autorización ni un control de seguridad.
 
 ## Archivos y dependencias
 

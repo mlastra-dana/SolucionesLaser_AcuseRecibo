@@ -10,7 +10,7 @@ Cambios locales en `dana-push-experience`. No se han modificado AWS, DANAconnect
 - Cuerpo: `notification.body`, `data.Mensaje`, `data.mensaje`, `data.body`.
 - Imagen: `data.IMAGEN`, `data.imagen`, `notification.image`; se conserva `data.image` como compatibilidad. Solo URLs HTTPS validas, sin credenciales incrustadas.
 
-La misma funcion sirve al banner foreground, detalle, diagnostico, representacion de mensajes antiguos en IndexedDB y notificaciones data-only del worker. No modifica payloads ni message IDs y conserva los tres tipos de eventos. Las imagenes remotas son opcionales y el fallo de carga no oculta el mensaje.
+La misma funcion sirve al banner foreground, detalle, representacion de mensajes antiguos en IndexedDB y notificaciones data-only del worker. No modifica payloads ni message IDs y conserva los tres tipos de eventos. Las imagenes remotas son opcionales y el fallo de carga no oculta el mensaje.
 
 **Demo en primer plano:** cada recepcion real `onMessage` solicita al mismo worker mostrar tambien una notificacion del sistema mediante `showNotification`, aunque la app este visible. El banner y el historial se conservan. El worker centraliza los pedidos de todas las pestañas, usa el message ID como tag y evita repetir IDs recientes o notificaciones con ese tag ya visibles. Un clic no vuelve a mostrar el mensaje ni genera otra recepcion. Sin message ID no se garantiza deduplicacion. El sistema operativo sigue controlando banners, sonidos, permisos y modo concentracion. [API de notificaciones del worker](https://developer.mozilla.org/en-US/docs/Web/API/ServiceWorkerRegistration/showNotification).
 
@@ -44,9 +44,22 @@ La pantalla de exito solo aparece tras las tres condiciones de Lambda. Mensaje: 
 - AbortController limita la solicitud a 30 segundos, incluida lectura de respuesta.
 - Nunca se repite automaticamente un POST. En red/timeout/respuesta incierta se advierte que el registro podria haberse procesado y que reintentar puede duplicar una conversacion.
 - El boton y formulario se bloquean durante la solicitud; una guarda sincrona evita dos envios en el mismo ciclo de eventos.
-- Ante fallo Lambda se mantiene token y listener foreground en memoria. El reintento manual reutiliza ese token, sin volver a pedir permiso ni generar otro. Copiar token sigue disponible en diagnostico aunque haya fallado Lambda.
+- Ante fallo Lambda se mantiene token y listener foreground en memoria. El reintento manual reutiliza ese token, sin volver a pedir permiso ni generar otro. El token no se muestra en la interfaz.
 - Reenviar notificacion vuelve a enviar el mismo registro y token a Lambda para iniciar otra conversacion. Bloquea solicitudes simultaneas; no genera otro token ni borra historial. Solo confirma la solicitud si Lambda confirma el inicio, no la entrega del Push. No hay reintentos automaticos. Recargar pierde el token guardado por la interfaz; Firebase gestiona su propia suscripcion.
 - No se imprimen tokens, datos personales ni respuestas crudas en logs. El historial local no recibe los datos del formulario. La Lambda si recibe los cuatro campos porque ese es su contrato.
+
+## Datos Necesarios del Cliente
+
+El panel de diagnostico se retiro de la vista. Esta lista queda como referencia tecnica para nuevas integraciones; no requiere cambiar la configuracion actual.
+
+- Configuracion publica de la app Web Firebase: API key, auth domain, project ID, storage bucket, messaging sender ID y app ID. Measurement ID es opcional. Nombres de variables en `DANA_PUSH_EXPERIENCE.md`.
+- Clave VAPID publica correspondiente al mismo proyecto Firebase.
+- URL HTTPS de la API de registro, con el contrato de cuatro campos y respuesta de inicio confirmado documentados arriba.
+- Dominio HTTPS final y origenes autorizados para CORS y restricciones de API key, cuando existan.
+- Aplicacion Push y conversacion DANAconnect vinculadas al proyecto Firebase correcto; mapeo de NOMBRE, EMAIL, TELEFONO y TOKEN, titulo, cuerpo y destino del clic.
+- Credenciales DANA o Firebase Admin, si el backend las necesita, gestionadas solo en el servidor por el responsable. Nunca incluir claves privadas ni secretos en `VITE_*` ni en estas notas.
+
+La validacion tecnica se realiza con las herramientas de desarrollo y los logs del backend, sin exponer tokens o datos personales en la demo.
 
 ## Configuracion y Primera Prueba
 
