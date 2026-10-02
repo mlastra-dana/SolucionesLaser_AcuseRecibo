@@ -16,7 +16,7 @@ const config = {
 async function fixture(worker = false, overrides = {}) {
   const h = {
     supported: true, requested: 0, permissionResult: 'granted', token: 'test-fcm-token',
-    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false, requests: [],
+    unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false, requests: [], pageMessages: [],
     response: { ok: true, status: 200, async json() { return { success: true, conversationStarted: true, resultId: 47 }; } },
     async record(type, context, payload) { h.events.push({ type, context, payload }); }
   };
@@ -46,13 +46,13 @@ async function fixture(worker = false, overrides = {}) {
       builder.onLoad({ filter: /.*/, namespace: 'test-double' }, args => ({ contents: modules[args.path], loader: 'js' }));
     } }]
   });
-  const notification = { permission: 'default', requestPermission: async () => { h.requested++; return h.permissionResult; } };
+  const notification = { permission: 'default', requestPermission: async () => { h.requested++; notification.permission = h.permissionResult; return h.permissionResult; } };
   const context = vm.createContext({
     h, console, setTimeout, clearTimeout, URL, AbortController,
     fetch: async (url, options) => { h.requests.push({ url, options }); if (h.fetchHandler) return h.fetchHandler(url, options); return h.response; },
     Notification: notification,
     window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout, matchMedia: () => ({ matches: h.standalone }) },
-    navigator: { userAgent: 'Chrome', platform: 'MacIntel', maxTouchPoints: 0, serviceWorker: { getRegistration: async () => h.workerRegistration, register: async (url, options) => { h.registrationCount++; h.registration = { url, options }; return { active: {} }; } } },
+    navigator: { userAgent: 'Chrome', platform: 'MacIntel', maxTouchPoints: 0, serviceWorker: { getRegistration: async () => h.workerRegistration, register: async (url, options) => { h.registrationCount++; h.registration = { url, options }; return { active: { postMessage: message => h.pageMessages.push(message) } }; } } },
     self: {
       skipWaiting: async () => { h.skippedWaiting = true; },
       location: { origin: 'https://demo.example' },
@@ -79,8 +79,12 @@ test('FCM registration uses permission, explicit worker and VAPID, with no DANA 
   assert.equal(h.events[0].type, 'PUSH_RECEIVED');
   assert.equal(h.events[0].context, 'foreground');
   assert.equal(received.length, 1);
+  assert.equal(h.pageMessages.length, 1);
+  assert.equal(h.pageMessages[0].type, 'SHOW_FOREGROUND_NOTIFICATION');
+  assert.equal(h.pageMessages[0].payload.messageId, 'm1');
   await h.foreground({ messageType: 'notification-clicked', messageId: 'm1' });
   assert.equal(received.length, 1);
+  assert.equal(h.pageMessages.length, 1);
   registration.unsubscribe();
   assert.equal(h.unsubscribeCount, 1);
   assert.equal(h.requests.length, 0);
@@ -128,6 +132,7 @@ test('blocked, rejected and dismissed permissions return actionable errors', asy
   h.permissionResult = 'denied';
   await assert.rejects(context.api.registerPushBrowser(() => {}), /Rechazaste/);
   h.permissionResult = 'default';
+  context.Notification.permission = 'default';
   await assert.rejects(context.api.registerPushBrowser(() => {}), /No concediste/);
 });
 
@@ -423,4 +428,67 @@ test('data-only notifications include optional image without generating extra re
   assert.equal(h.notices[0][1].image, 'https://demo.example/image.png');
   assert.equal(h.notices[0][1].icon, '/pwa/icon-192.png');
   assert.equal(h.events.length, 1);
+});
+
+function foregroundRequest(h, payload, url = 'https://demo.example/') {
+  let completed;
+  h.listeners.message({
+    data: { source: 'DANA_PUSH_PAGE', type: 'SHOW_FOREGROUND_NOTIFICATION', payload },
+    source: { url }, waitUntil(promise) { completed = promise; }
+  });
+  return completed;
+}
+
+test('foreground system notification is shown once across concurrent tabs, with normalized content and click recovery', async () => {
+  const { h } = await fixture(true);
+  const payload = { messageId: 'foreground-real-id-fixture', notification: { body: 'Mensaje DANA' }, data: { Titulo: 'DANA PUSH', IMAGEN: 'https://demo.example/image.png' } };
+  await Promise.all([foregroundRequest(h, payload), foregroundRequest(h, payload, 'https://demo.example/?tab=2')]);
+  assert.equal(h.notices.length, 1);
+  assert.equal(h.notices[0][0], 'DANA PUSH');
+  assert.equal(h.notices[0][1].body, 'Mensaje DANA');
+  assert.equal(h.notices[0][1].image, payload.data.IMAGEN);
+  assert.equal(h.notices[0][1].icon, '/pwa/icon-192.png');
+  assert.equal(h.notices[0][1].tag, payload.messageId);
+  assert.equal(h.events.length, 0);
+  let completed;
+  let closed = false;
+  h.listeners.notificationclick({ notification: { data: h.notices[0][1].data, close() { closed = true; } }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+  await completed;
+  assert.equal(closed, true);
+  assert.equal(h.openedUrl, 'https://demo.example/');
+  assert.equal(h.events[0].type, 'PUSH_CLICKED');
+  assert.equal(h.events[1].type, 'PUSH_OPENED');
+  assert.equal(h.events[0].payload.messageId, payload.messageId);
+  await foregroundRequest(h, payload);
+  assert.equal(h.notices.length, 1);
+});
+
+test('foreground display ignores foreign clients and already-visible message tags', async () => {
+  const { h, context } = await fixture(true);
+  const payload = { messageId: 'existing-tag', data: { Titulo: 'DANA PUSH' } };
+  await foregroundRequest(h, payload, 'https://other.example/');
+  assert.equal(h.notices.length, 0);
+  context.self.registration.getNotifications = async options => {
+    assert.equal(options.tag, payload.messageId);
+    return [{}];
+  };
+  await foregroundRequest(h, payload);
+  assert.equal(h.notices.length, 0);
+});
+
+test('foreground display failure keeps receipt handling intact and does not mark a failed display as shown', async () => {
+  const { h, context } = await fixture();
+  await context.api.registerPushBrowser(() => {});
+  context.Notification.permission = 'denied';
+  await h.foreground({ messageId: 'permission-changed', data: { Titulo: 'DANA PUSH' } });
+  assert.equal(h.events[0].type, 'PUSH_RECEIVED');
+  assert.equal(h.pageMessages.length, 0);
+  const worker = await fixture(true);
+  const payload = { messageId: 'display-retry', data: { Titulo: 'DANA PUSH' } };
+  worker.context.self.registration.showNotification = async () => { throw new Error('Display unavailable'); };
+  await foregroundRequest(worker.h, payload);
+  worker.context.self.registration.showNotification = async (...args) => worker.h.notices.push(args);
+  await foregroundRequest(worker.h, payload);
+  assert.equal(worker.h.notices.length, 1);
+  assert.equal(worker.h.events.length, 0);
 });

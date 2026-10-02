@@ -22,6 +22,45 @@ if (precache.length) {
 self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
+const shownMessageIds = new Set();
+async function showObservedNotification(payload) {
+  const messageId = payload.messageId ?? payload.fcmMessageId;
+  if (messageId && shownMessageIds.has(messageId)) return;
+  // One worker arbitrates requests from all tabs, including concurrent foreground callbacks.
+  if (messageId) {
+    shownMessageIds.add(messageId);
+    if (shownMessageIds.size > 100) shownMessageIds.delete(shownMessageIds.values().next().value);
+  }
+  try {
+    if (messageId && self.registration.getNotifications) {
+      const existing = await self.registration.getNotifications({ tag: messageId });
+      if (existing.length) return;
+    }
+    const details = normalizeNotification(payload);
+    await self.registration.showNotification(details.title, {
+      body: details.body,
+      icon: payload.notification?.icon || payload.data?.icon || '/pwa/icon-192.png',
+      ...(details.image ? { image: details.image } : {}),
+      tag: messageId,
+      data: { danaPayload: payload }
+    });
+  } catch (error) {
+    if (messageId) shownMessageIds.delete(messageId);
+    throw error;
+  }
+}
+
+self.addEventListener('message', event => {
+  if (event.data?.source !== 'DANA_PUSH_PAGE' || event.data?.type !== 'SHOW_FOREGROUND_NOTIFICATION') return;
+  const payload = event.data.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+  try {
+    if (!event.source?.url || new URL(event.source.url).origin !== self.location.origin) return;
+  } catch { return; }
+  // Receipt was already recorded by onMessage. Displaying it is not another delivery event.
+  event.waitUntil(showObservedNotification(payload).catch(() => {}));
+});
+
 async function track(type, payload) {
   const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
   try { await recordPushEvent(type, 'background', normalized); } catch { /* Tracking must not prevent a notification. */ }
@@ -65,14 +104,7 @@ if (config.apiKey && config.projectId === 'dana-push-demo-vzla' && config.appId 
     await track('PUSH_RECEIVED', payload);
     // Firebase displays notification payloads automatically. Only render data-only messages ourselves.
     if (!payload.notification) {
-      const details = normalizeNotification(payload);
-      await self.registration.showNotification(details.title, {
-        body: details.body,
-        icon: payload.data?.icon || '/pwa/icon-192.png',
-        ...(details.image ? { image: details.image } : {}),
-        tag: payload.messageId,
-        data: { danaPayload: payload }
-      });
+      await showObservedNotification(payload);
     }
   });
 }

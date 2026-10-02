@@ -19,6 +19,13 @@ function subscribe(onPayload: (payload: MessagePayload) => void) {
     if ((payload as MessagePayload & { messageType?: string }).messageType === 'notification-clicked') return;
     await recordPushEvent('PUSH_RECEIVED', 'foreground', payload as unknown as Record<string, unknown>).catch(() => {});
     onPayload(payload);
+    if (Notification.permission === 'granted') {
+      // Forward only onMessage receipts, never worker click events or restored history entries.
+      try {
+        const registration = await registerSharedWorker();
+        registration.active?.postMessage({ source: 'DANA_PUSH_PAGE', type: 'SHOW_FOREGROUND_NOTIFICATION', payload });
+      } catch { /* Keep the observed message available in the app if system display is unavailable. */ }
+    }
   });
 }
 
