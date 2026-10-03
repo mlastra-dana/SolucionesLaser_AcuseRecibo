@@ -748,3 +748,86 @@ test('incomplete V2 explains missing correlation without posting or leaking its 
   assert.ok(f.logs.some(([, item]) => item.error?.includes('PUSH_REF')));
   assert.equal(JSON.stringify(f.logs).includes('secret-missing-ref'), false);
 });
+
+function installedTouchWindow(f, { ios = false, installed = true, touch = true, coarse = true } = {}) {
+  const navigation = [];
+  const opens = [];
+  f.context.navigator = { maxTouchPoints: touch ? 5 : 0, standalone: ios && installed };
+  f.context.window = {
+    matchMedia(query) { return { matches: query === '(display-mode: standalone)' ? installed && !ios : query === '(pointer: coarse)' ? coarse : false }; },
+    open(url) { opens.push(url); return null; },
+    location: { assign(url) { navigation.push(url); } }
+  };
+  return { navigation, opens };
+}
+
+for (const ios of [true, false]) {
+  for (const version of ['v1', 'v2']) {
+    test(`${ios ? 'iPhone' : 'Android'} installed CTA ${version} navigates once on the first tap without blank windows or waiting for Lambda`, async () => {
+      const db = new IDBFactory(), f = fixture(db);
+      const message = version === 'v2' ? payloadV2() : payload();
+      message.data.cta_url = `https://campaign.example/${version}?source=dynamic`;
+      if (version === 'v1') await f.tracking.saveReceiptAssociation(association());
+      const { navigation, opens } = installedTouchWindow(f, { ios, coarse: !ios });
+      let release;
+      f.h.fetch = () => new Promise(resolve => { release = resolve; });
+      const click = f.followCta(message);
+      assert.equal(opens.length, 0);
+      const result = await click;
+      assert.equal(result.navigated, true);
+      assert.equal(result.stored, true);
+      assert.deepEqual(navigation, [message.data.cta_url]);
+      const stored = (await f.tracking.getReceiptDiagnostics()).events[0];
+      assert.equal(stored.eventType, 'PUSH_CLICKED');
+      assert.equal(stored.accion, message.data.cta_action);
+      assert.equal(stored.timestamp, '2026-10-02T12:00:00.000Z');
+      for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal(f.requests[0].url, version === 'v2' ? endpointV2 : endpoint);
+      assert.equal(f.requests[0].body.accion, message.data.cta_action);
+      release({ status: 503 });
+      for (let i = 0; i < 100 && (await f.tracking.getReceiptDiagnostics()).status !== 'error'; i++) await new Promise(resolve => setTimeout(resolve, 5));
+      assert.equal((await f.tracking.getReceiptDiagnostics()).pending, 1);
+      const restored = fixture(db);
+      restored.advance(30_001);
+      await restored.tracking.flushPushReceipts();
+      assert.deepEqual(restored.requests[0].body, f.requests[0].body);
+      await f.followCta(message);
+      await f.tracking.flushPushReceipts();
+      assert.equal(f.requests.length, 1);
+      assert.equal((await f.readEvents()).filter(item => item.type === 'PUSH_CLICKED').length, 1);
+    });
+  }
+}
+
+test('mobile direct navigation begins after durable local storage, not before its transaction finishes', async () => {
+  const f = fixture();
+  const { navigation, opens } = installedTouchWindow(f, { ios: true });
+  const pending = f.followCta(payloadV2());
+  assert.equal(navigation.length, 0);
+  await pending;
+  assert.equal(opens.length, 0);
+  assert.equal(navigation.length, 1);
+  assert.equal((await f.readEvents())[0].type, 'PUSH_CLICKED');
+  assert.equal((await f.tracking.getReceiptDiagnostics()).events[0].eventType, 'PUSH_CLICKED');
+});
+
+test('invalid mobile CTA never navigates or records a click', async () => {
+  const f = fixture();
+  const { navigation, opens } = installedTouchWindow(f);
+  const message = payloadV2();
+  message.data.cta_url = 'http://insecure.example/';
+  assert.equal(await f.followCta(message), undefined);
+  assert.equal(navigation.length, 0);
+  assert.equal(opens.length, 0);
+  assert.equal((await f.readEvents()).length, 0);
+});
+
+for (const mode of [{ installed: true, touch: false }, { installed: false, touch: true }, { installed: true, touch: true, coarse: false }]) {
+  test(`desktop and noninstalled browsers retain their existing CTA window path ${JSON.stringify(mode)}`, async () => {
+    const f = fixture();
+    const { navigation, opens } = installedTouchWindow(f, mode);
+    await f.followCta(payload());
+    assert.deepEqual(opens, ['about:blank']);
+    assert.deepEqual(navigation, ['https://destination.example/']);
+  });
+}
