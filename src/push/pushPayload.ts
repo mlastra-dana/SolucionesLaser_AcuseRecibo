@@ -12,6 +12,12 @@ export function getTrackingVersion(payload: Record<string, unknown>): TrackingVe
   return trackingFields(payload).credentialPresent || payload.danaTrackingVersion === 'v2' ? 'v2' : 'v1';
 }
 
+export function notificationIdentity(payload: Record<string, unknown>): string | undefined {
+  const messageId = payload.messageId ?? payload.fcmMessageId;
+  if (typeof messageId !== 'string' || !messageId.trim()) return;
+  return getTrackingVersion(payload) === 'v2' ? JSON.stringify(['v2', trackingFields(payload).pushRef, messageId]) : messageId;
+}
+
 function withoutCredentials(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(withoutCredentials);
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)

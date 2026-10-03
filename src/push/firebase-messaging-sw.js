@@ -3,7 +3,7 @@ import { getMessaging, onBackgroundMessage } from 'firebase/messaging/sw';
 import { getFirebaseConfig } from './firebaseConfig';
 import { recordPushEvent } from './eventStore';
 import { normalizeNotification } from './normalizeNotification';
-import { safePushPayload } from './pushPayload';
+import { getTrackingVersion, notificationIdentity, safePushPayload, trackingFields } from './pushPayload';
 import { queuePushReceipt, queuePushEvent, flushPushReceipts } from './receiptTracking';
 import { setCacheNameDetails } from 'workbox-core';
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from 'workbox-precaching';
@@ -25,6 +25,25 @@ self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
 
 const shownMessageIds = new Set();
+function supportsNotificationActions() {
+  try { return typeof Notification !== 'undefined' && Number.isFinite(Notification.maxActions) && Notification.maxActions > 0; }
+  catch { return false; }
+}
+
+// Credentials live in IndexedDB. Native data contains only correlation and display/CTA fields.
+function nativePayload(payload, details) {
+  const safe = safePushPayload(payload);
+  return {
+    messageId: payload.messageId ?? payload.fcmMessageId,
+    danaTrackingVersion: getTrackingVersion(payload),
+    danaCredentialDetected: safe.danaCredentialDetected === true,
+    notification: { title: details.title, body: details.body },
+    data: { push_ref: trackingFields(payload).pushRef,
+      ...(details.image ? { IMAGEN: details.image } : {}),
+      ...(details.cta ? { cta_label: details.cta.label, cta_action: details.cta.action, cta_url: details.cta.url } : {}) }
+  };
+}
+
 async function showObservedNotification(payload) {
   const messageId = payload.messageId ?? payload.fcmMessageId;
   if (messageId && shownMessageIds.has(messageId)) return;
@@ -44,9 +63,9 @@ async function showObservedNotification(payload) {
       icon: payload.notification?.icon || payload.data?.icon || '/pwa/icon-192.png',
       ...(details.image ? { image: details.image } : {}),
       tag: messageId,
-      ...(details.cta && typeof Notification !== 'undefined' && Notification.maxActions > 0
+      ...(details.cta && supportsNotificationActions()
         ? { actions: [{ action: details.cta.action, title: details.cta.label }] } : {}),
-      data: { danaPayload: payload }
+      data: { danaPayload: nativePayload(payload, details) }
     });
   } catch (error) {
     if (messageId) shownMessageIds.delete(messageId);
@@ -73,12 +92,10 @@ async function track(type, payload, timestamp, accion = '') {
 }
 
 function notificationUrl(payload) {
-  const link = payload.fcmOptions?.link ?? payload.fcm_options?.link ?? payload.data?.url ?? payload.data?.link ?? payload.data?.click_action ?? payload.notification?.click_action;
-  try {
-    const url = new URL(link || '/', self.location.origin);
-    if (url.protocol === 'https:') return url.href;
-  } catch { /* Fall back to the landing if the supplied URL is invalid. */ }
-  return self.location.origin + '/';
+  const url = new URL('/', self.location.origin);
+  const identity = notificationIdentity(payload);
+  if (identity) url.searchParams.set('notification', identity);
+  return url.href;
 }
 
 // Install before getMessaging, so our click handling owns both automatic and data-only notifications.
@@ -93,16 +110,15 @@ self.addEventListener('notificationclick', event => {
   const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
   event.waitUntil((async () => {
     const persistence = (async () => {
-      await queuePushEvent('PUSH_OPENED', normalized, timestamp).catch(() => {});
-      await track('PUSH_OPENED', normalized, timestamp).catch(() => {});
-      if (cta) {
-        await queuePushEvent('PUSH_CLICKED', normalized, timestamp, cta.action).catch(() => {});
-        await track('PUSH_CLICKED', normalized, timestamp, cta.action).catch(() => {});
-      }
+      const type = cta ? 'PUSH_CLICKED' : 'PUSH_OPENED';
+      const action = cta?.action ?? '';
+      await queuePushEvent(type, normalized, timestamp, action).catch(() => {});
+      await track(type, normalized, timestamp, action).catch(() => {});
     })();
     const reporting = persistence.then(() => flushPushReceipts().catch(() => {}));
     const navigation = (async () => {
-      if (cta) await persistence;
+      // The app must find the matching persisted detail before it is opened, too.
+      await persistence;
       const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       const target = cta ? cta.url : notificationUrl(payload);
       const client = clients.find(item => new URL(item.url).origin === new URL(target).origin);
@@ -123,7 +139,7 @@ if (config.apiKey && config.projectId === 'dana-push-demo-vzla' && config.appId 
     const receivedAt = new Date().toISOString();
     const normalized = { ...payload, messageId: payload.messageId ?? payload.fcmMessageId };
     await queuePushReceipt(normalized, receivedAt).catch(() => {});
-    await track('PUSH_RECEIVED', payload);
+    await track('PUSH_RECEIVED', payload, receivedAt);
     // Firebase displays notification payloads automatically. Only render data-only messages ourselves.
     if (!payload.notification) {
       await showObservedNotification(payload);

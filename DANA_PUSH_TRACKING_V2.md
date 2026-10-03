@@ -23,7 +23,7 @@ La cola guarda la credencial V2 y el evento en una misma transaccion de dana-pus
 
 Los eventos V2 usan claves `[v2, pushRef, messageId, eventType, accion]`; V1 conserva sus claves anteriores. Orden, leases y deduplicacion se separan por version. V2 mantiene una secuencia por notificacion, sin bloquear otra notificacion que comparta la referencia. Las versiones y stores de todas las bases existentes permanecen intactos; no se elimina ningun evento ni asociacion.
 
-El historial visual guarda el payload completo necesario para abrir y usar el CTA, pero elimina recursivamente event_auth_token y eventAuthToken. La marca interna danaTrackingVersion=v2 permite reconocer despues ese payload sin la credencial, obteniendola de associations. Tambien se protegen el callback de primer plano, los mensajes del Worker a React y el JSON visible. El payload original de Firebase y los datos internos necesarios para el clic nativo no se reconstruyen. No se registran tokens en consola.
+El historial visual guarda el payload necesario para abrir y usar el CTA, pero elimina recursivamente las variantes de event_auth_token. La marca interna danaTrackingVersion=v2 permite reconocer despues ese payload sin la credencial, obteniendola de associations. Tambien se protegen el callback de primer plano y los mensajes del Worker a React; la interfaz no muestra JSON tecnico. Las notificaciones creadas por nuestro Worker incluyen solo correlacion y contenido/CTA normalizados, sin credencial; las automaticas de Firebase conservan FCM_MSG. No se registran tokens en consola. Ver [CTA nativo](DANA_PUSH_NATIVE_CTA.md).
 
 ## Contrato y Reintentos
 

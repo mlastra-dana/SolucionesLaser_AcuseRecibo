@@ -11,7 +11,7 @@ import NotificationsHistory from './NotificationsHistory';
 import { flushPushReceipts, getReceiptDiagnostics, nextReceiptAttempt, queuePushEvent, type ReceiptDiagnostics } from './receiptTracking';
 import { formatEventTime } from './eventTimezone';
 import { followNotificationCta } from './followNotificationCta';
-import { getTrackingVersion, safePushPayload, trackingFields } from './pushPayload';
+import { getTrackingVersion, notificationIdentity, safePushPayload, trackingFields } from './pushPayload';
 
 const demoMode = import.meta.env.VITE_PUSH_DEMO_MODE !== 'false';
 type RegistrationStage = 'Validando información' | 'Conectando con Firebase' | 'Registrando dispositivo' | 'Enviando información a DANAconnect' | 'Preparando notificación' | 'Registro completado';
@@ -55,7 +55,10 @@ export default function PushExperience() {
       const stored = await readPushEvents();
       setEvents(stored);
       setHistoryError('');
-      const clicked = stored.find(item => item.type === 'PUSH_OPENED' && item.context === 'background') ?? stored.find(item => item.type === 'PUSH_CLICKED' && item.context === 'background');
+      const requested = new URL(window.location.href).searchParams.get('notification');
+      const clicked = requested
+        ? stored.find(item => item.type === 'PUSH_OPENED' && notificationIdentity(item.payload) === requested)
+        : stored.find(item => item.type === 'PUSH_OPENED' && item.context === 'background') ?? stored.find(item => item.type === 'PUSH_CLICKED' && item.context === 'background');
       if (clicked && restoredClick.current !== clicked.id) {
         restoredClick.current = clicked.id;
         setLatest(clicked.payload as unknown as MessagePayload);

@@ -15,7 +15,14 @@ const config = {
   VITE_FIREBASE_VAPID_KEY: 'test-public-vapid'
 };
 
-async function fixture(worker = false, overrides = {}) {
+function assertDetailUrl(value, identity) {
+  const url = new URL(value);
+  assert.equal(url.origin, 'https://demo.example');
+  assert.equal(url.pathname, '/');
+  assert.equal(url.searchParams.get('notification'), identity);
+}
+
+async function fixture(worker = false, overrides = {}, indexedDB = new IDBFactory(), clock = Date) {
   const h = {
     supported: true, requested: 0, permissionResult: 'granted', token: 'test-fcm-token',
     unsubscribeCount: 0, events: [], notices: [], clients: [], listeners: {}, apps: [], initializationCount: 0, registrationCount: 0, standalone: false, requests: [], pageMessages: [],
@@ -50,7 +57,7 @@ async function fixture(worker = false, overrides = {}) {
   });
   const notification = { permission: 'default', requestPermission: async () => { h.requested++; notification.permission = h.permissionResult; return h.permissionResult; } };
   const context = vm.createContext({
-    h, console, setTimeout, clearTimeout, URL, URLSearchParams, AbortController, indexedDB: new IDBFactory(), crypto: webcrypto,
+    h, console, Date: clock, setTimeout, clearTimeout, URL, URLSearchParams, AbortController, indexedDB, crypto: webcrypto,
     fetch: async (url, options) => { h.requests.push({ url, options }); if (h.fetchHandler) return h.fetchHandler(url, options); return h.response; },
     Notification: notification,
     window: { isSecureContext: true, Notification: notification, PushManager: {}, setTimeout, matchMedia: () => ({ matches: h.standalone }) },
@@ -166,7 +173,7 @@ test('data-only background payload shows one notification and remains clickable'
   });
   await completed;
   assert.ok(stopped);
-  assert.equal(h.openedUrl, 'https://demo.example/');
+  assertDetailUrl(h.openedUrl, 'm2');
   assert.deepEqual(h.events.map(item => item.type), ['PUSH_RECEIVED', 'PUSH_OPENED']);
 });
 
@@ -317,7 +324,7 @@ test('diagnostics describe the current permission, worker script and scope', asy
   assert.equal(h.requested, 0);
 });
 
-test('data-only icon and HTTPS destination are honored', async () => {
+test('data-only icon is honored and body opens the app detail rather than a campaign link', async () => {
   const { h } = await fixture(true);
   const payload = { messageId: 'with-url', data: { title: 'Fixture', icon: 'https://demo.example/icon.png', url: 'https://demo.example/?from=push' } };
   await h.background(payload);
@@ -328,10 +335,10 @@ test('data-only icon and HTTPS destination are honored', async () => {
     stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; }
   });
   await completed;
-  assert.equal(h.openedUrl, payload.data.url);
+  assertDetailUrl(h.openedUrl, payload.messageId);
 });
 
-test('unsafe notification destination falls back to landing; FCM link supports HTTPS', async () => {
+test('body always opens its matching detail instead of unsafe or external FCM links', async () => {
   const { h } = await fixture(true);
   async function click(payload) {
     let completed;
@@ -342,9 +349,9 @@ test('unsafe notification destination falls back to landing; FCM link supports H
     await completed;
   }
   await click({ fcmMessageId: 'url-1', data: { url: 'javascript:alert(1)' } });
-  assert.equal(h.openedUrl, 'https://demo.example/');
+  assertDetailUrl(h.openedUrl, 'url-1');
   await click({ fcmMessageId: 'url-2', fcm_options: { link: 'https://demo.example/?from=fcm' } });
-  assert.equal(h.openedUrl, 'https://demo.example/?from=fcm');
+  assertDetailUrl(h.openedUrl, 'url-2');
 });
 
 test('worker activates updated deployment configuration without waiting for all tabs to close', async () => {
@@ -413,7 +420,7 @@ test('notification click reuses an app window with a different query instead of 
     stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; }
   });
   await completed;
-  assert.equal(navigated, 'https://demo.example/?push=true');
+  assertDetailUrl(navigated, 'reuse-window');
   assert.ok(focused);
   assert.equal(h.openedUrl, undefined);
 });
@@ -452,7 +459,7 @@ test('foreground system notification is shown once across concurrent tabs, with 
   h.listeners.notificationclick({ notification: { data: h.notices[0][1].data, close() { closed = true; } }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
   await completed;
   assert.equal(closed, true);
-  assert.equal(h.openedUrl, 'https://demo.example/');
+  assertDetailUrl(h.openedUrl, payload.messageId);
   assert.equal(h.events[0].type, 'PUSH_OPENED');
   assert.equal(h.events.length, 1);
   assert.equal(h.events[0].payload.messageId, payload.messageId);
@@ -554,7 +561,7 @@ async function seedWorkerAssociation(context, pushRef) {
   db.close();
 }
 
-test('system CTA reports opened then clicked, normalizes original FCM identifiers and reuses one app window', async () => {
+test('system CTA reports only clicked, normalizes original FCM identifiers and reuses one app window', async () => {
   const { h, context } = await fixture(true, { VITE_DANA_PUSH_API_URL: 'https://intermediary.example' });
   await seedWorkerAssociation(context, 'PUSH-system-action');
   let focused = 0, navigated;
@@ -567,9 +574,9 @@ test('system CTA reports opened then clicked, normalizes original FCM identifier
   };
   await click();
   await click();
-  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_OPENED', 'PUSH_CLICKED']);
-  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).accion), ['', 'CONSULTAR_POLIZA']);
-  assert.equal(JSON.parse(h.requests[1].options.body).messageId, 'system-action-id');
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_CLICKED']);
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).accion), ['CONSULTAR_POLIZA']);
+  assert.equal(JSON.parse(h.requests[0].options.body).messageId, 'system-action-id');
   assert.equal(navigated, 'https://demo.example/poliza');
   assert.equal(focused, 2);
   assert.equal(h.openedUrl, undefined);
@@ -582,7 +589,7 @@ test('system body navigation completes while event network is stalled and failed
   h.fetchHandler = () => new Promise(resolve => { release = resolve; });
   h.listeners.notificationclick({ action: '', notification: { data: { danaPayload: { messageId: 'slow-network-id', data: { push_ref: 'PUSH-slow-network' } } }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
   for (let i = 0; i < 100 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(h.openedUrl, 'https://demo.example/');
+  assertDetailUrl(h.openedUrl, 'slow-network-id');
   assert.equal(h.requests.length, 1);
   release({ status: 503 });
   await completed;
@@ -616,7 +623,7 @@ test('invalid or unrelated native CTA actions preserve opening without clicked o
     h.listeners.notificationclick({ action: 'OTHER_ACTION', notification: { data: { danaPayload: payload }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
     await completed;
     assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_OPENED']);
-    assert.equal(h.openedUrl, 'https://demo.example/');
+    assertDetailUrl(h.openedUrl, 'invalid-action-id');
   }
 });
 
@@ -667,4 +674,71 @@ test('background V2 persists credentials for all interactions without registrati
   assert.equal(h.openedUrl, payload.data.cta_url);
   assert.equal(JSON.stringify(messages).includes('signed-v2-bg-fixture'), false);
   assert.equal(messages[0].payload.danaTrackingVersion, 'v2');
+});
+
+test('native V2 CTA retains only necessary nonsecret data and survives worker restart after a network failure', async () => {
+  const db = new IDBFactory();
+  const env = { VITE_DANA_PUSH_V2_API_URL: 'https://v2.example/event', VITE_DANA_PUSH_API_URL: 'https://v1.example/register' };
+  const { h, context } = await fixture(true, env, db);
+  context.Notification.maxActions = 2;
+  h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  const payload = { messageId: 'native-v2-retry', data: { PUSH_REF: 'PUSH-native-v2', EVENT_AUTH_TOKEN: 'signed-native-test-only', Titulo: 'Campaign title', Mensaje: 'Campaign body', IMAGEN: 'https://image.example/native.png', cta_label: 'Dynamic CTA label', cta_action: 'DYNAMIC_ACTION', cta_url: 'https://destination.example/native', unrelated: 'omit-from-native' } };
+  await Promise.all([h.background(payload), h.background(payload)]);
+  assert.equal(h.notices.length, 1);
+  const native = h.notices[0][1];
+  assert.equal(native.actions[0].title, payload.data.cta_label);
+  assert.equal(native.actions[0].action, payload.data.cta_action);
+  assert.equal(native.actions[0].navigate, undefined);
+  assert.equal(native.body, payload.data.Mensaje);
+  assert.equal(native.data.danaPayload.danaTrackingVersion, 'v2');
+  assert.equal(JSON.stringify(native).includes('signed-native-test-only'), false);
+  assert.equal(JSON.stringify(native).includes('EVENT_AUTH_TOKEN'), false);
+  assert.equal(JSON.stringify(native).includes('unrelated'), false);
+  h.fetchHandler = async () => { throw new Error('Temporary offline'); };
+  context.self.clients.openWindow = async url => {
+    // Navigation must run only after the click is already durable, before HTTP completion.
+    const request = db.open('dana-push-receipts', 1);
+    await new Promise(resolve => { request.onsuccess = resolve; });
+    const rows = request.result.transaction('receipts').objectStore('receipts').getAll();
+    const receipts = await new Promise(resolve => { rows.onsuccess = () => resolve(rows.result); });
+    request.result.close();
+    assert.ok(receipts.some(item => item.eventType === 'PUSH_CLICKED' && item.accion === 'DYNAMIC_ACTION'));
+    h.openedUrl = url;
+  };
+  let completed;
+  h.listeners.notificationclick({ action: 'DYNAMIC_ACTION', notification: { data: native.data, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+  await completed;
+  assert.equal(h.openedUrl, payload.data.cta_url);
+  assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_RECEIVED', 'PUSH_CLICKED']);
+  assert.ok(h.requests.every(item => item.url === env.VITE_DANA_PUSH_V2_API_URL));
+  const original = JSON.parse(h.requests[1].options.body);
+  const later = Date.now() + 31_000;
+  class RetryClock extends Date {
+    constructor(...args) { super(...(args.length ? args : [later])); }
+    static now() { return later; }
+  }
+  const restored = await fixture(true, env, db, RetryClock);
+  restored.h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+  let resumed;
+  restored.h.listeners.notificationclick({ action: 'DYNAMIC_ACTION', notification: { data: native.data, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { resumed = promise; } });
+  await resumed;
+  assert.equal(restored.h.requests.length, 1);
+  assert.deepEqual(JSON.parse(restored.h.requests[0].options.body), original);
+  assert.equal(restored.h.requests[0].url, env.VITE_DANA_PUSH_V2_API_URL);
+});
+
+test('automatic Firebase notification with CTA is not rebuilt and unsupported actions still open the exact V2 detail', async () => {
+  for (const support of [undefined, 0]) {
+    const { h, context } = await fixture(true, { VITE_DANA_PUSH_V2_API_URL: 'https://v2.example/event' });
+    context.Notification.maxActions = support;
+    h.response = { status: 202, json: async () => ({ success: true, uploadAccepted: true }) };
+    const payload = { messageId: 'auto-v2', notification: { title: 'Automatic title', body: 'Automatic body' }, data: { push_ref: 'PUSH-auto', event_auth_token: 'signed-auto-test-only', Titulo: 'Auto V2', cta_label: 'View details', cta_action: 'VIEW_DETAILS', cta_url: 'https://destination.example/details' } };
+    await h.background(payload);
+    assert.equal(h.notices.length, 0);
+    let completed;
+    h.listeners.notificationclick({ action: '', notification: { data: { FCM_MSG: payload }, close() {} }, stopImmediatePropagation() {}, waitUntil(promise) { completed = promise; } });
+    await completed;
+    assertDetailUrl(h.openedUrl, JSON.stringify(['v2', 'PUSH-auto', 'auto-v2']));
+    assert.deepEqual(h.requests.map(item => JSON.parse(item.options.body).event), ['PUSH_RECEIVED', 'PUSH_OPENED']);
+  }
 });

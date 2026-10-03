@@ -1,5 +1,5 @@
 import { normalizeNotification } from './normalizeNotification';
-import { getTrackingVersion, safePushPayload, trackingFields } from './pushPayload';
+import { getTrackingVersion, notificationIdentity, safePushPayload, trackingFields } from './pushPayload';
 
 export type PushEventType = 'PUSH_RECEIVED' | 'PUSH_OPENED' | 'PUSH_CLICKED';
 export type PushEvent = {
@@ -27,7 +27,7 @@ export type ObservedNotification = {
 export function getNotificationHistory(events: PushEvent[]): ObservedNotification[] {
   const messages = new Map<string, ObservedNotification>();
   for (const event of [...events].sort((a, b) => a.timestamp.localeCompare(b.timestamp))) {
-    const id = getTrackingVersion(event.payload) === 'v2' ? JSON.stringify(['v2', trackingFields(event.payload).pushRef, event.messageId || event.id]) : event.messageId || event.id;
+    const id = notificationIdentity({ ...event.payload, messageId: event.messageId || event.id })!;
     const previous = messages.get(id);
     const details = getMessageDetails(event.payload);
     messages.set(id, {
